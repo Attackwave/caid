@@ -1,6 +1,7 @@
 """Read live PCB geometry and apply reviewed footprint placement proposals."""
 
 from dataclasses import dataclass, replace
+import hashlib
 import math
 
 try:
@@ -23,8 +24,11 @@ def _side(footprint):
 
 
 def _outline(board):
+    shapes = board.get_shapes()
+    if not shapes:
+        return None
     from kipy.proto.board.board_types_pb2 import BoardLayer
-    edges = [shape for shape in board.get_shapes() if shape.layer == BoardLayer.BL_Edge_Cuts]
+    edges = [shape for shape in shapes if shape.layer == BoardLayer.BL_Edge_Cuts]
     if (len(edges) == 1 and type(edges[0]).__name__ == "BoardRectangle" and
             hasattr(edges[0], "start") and hasattr(edges[0], "end")):
         a, b = _mm(edges[0].start), _mm(edges[0].end)
@@ -73,6 +77,7 @@ def snapshot(board):
     return {
         "document": board.name,
         "project_path": board.document.project.path,
+        "board_sha256": hashlib.sha256(board.get_as_string().encode("utf-8")).hexdigest(),
         "copper_layers": board.get_copper_layer_count(),
         "outline_mm": _outline(board),
         "counts": {"footprints": len(footprints), "tracks": len(tracks),
@@ -234,12 +239,17 @@ def mark_footprints(board, references, language="en"):
         board.add_to_selection([by_ref[ref] for ref in references])
 
 
+def board_matches_snapshot(board, original_snapshot):
+    """Compare all live PCB facts while ignoring added model-context metadata."""
+    current = snapshot(board)
+    return all(original_snapshot.get(key) == value for key, value in current.items())
+
+
 def apply_placements(board, placements, original_snapshot, language="en"):
     """Flip and move within one undoable KiCad commit."""
-    from kipy.geometry import Vector2
-
-    if snapshot(board) != original_snapshot:
+    if not board_matches_snapshot(board, original_snapshot):
         raise ValueError(localized(language, "The board changed since the preview. Please request a new proposal.", "Die Platine hat sich seit der Vorschau geändert. Bitte neu anfragen."))
+    from kipy.geometry import Vector2
     by_ref = {_ref(fp): fp for fp in board.get_footprints()}
     if set(item.ref for item in placements) - set(by_ref):
         raise ValueError(localized(language, "A footprint is no longer present.", "Ein Bauteil ist nicht mehr vorhanden."))

@@ -20,12 +20,18 @@ try:
     from .schematic import _run_cli_netlist, _erc_counts
     from .diagnostics import _cli_path
     from .process import run_command
+    from .project_rules import synchronize_project_rules
+    from .project_recovery import StageGuard
+    from .component_review import review_components
 except ImportError:
     from footprints import find_footprint
     from schematic_fields import _root_forms
     from schematic import _run_cli_netlist, _erc_counts
     from diagnostics import _cli_path
     from process import run_command
+    from project_rules import synchronize_project_rules
+    from project_recovery import StageGuard
+    from component_review import review_components
 
 
 _ID = re.compile(r"^[A-Za-z0-9_.+\-]+:[A-Za-z0-9_.+\-]+$")
@@ -34,6 +40,7 @@ _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,60}$")
 _QUOTED = r'("(?:\\.|[^"\\])*")'
 _PIN_AT = re.compile(r"\(at\s+(-?[0-9.]+)\s+(-?[0-9.]+)\s+(-?[0-9.]+)\)")
 _PIN_NUMBER = re.compile(r"\(number\s+" + _QUOTED)
+_PIN_NAME = re.compile(r"\(name\s+" + _QUOTED)
 _PAD_NUMBER = re.compile(r"\(pad\s+" + _QUOTED)
 _SYMBOL_LIBRARY = re.compile(r'\(lib\s+\(name\s+"([^"\\]+)"\).*?\(uri\s+"\$\{KIPRJMOD\}/([^"\\]+)"\)', re.S)
 
@@ -75,40 +82,98 @@ def _library_symbol(identifier, root, project_symbols=None):
     if not path.is_file():
         raise ValueError(f"Symbol library not found: {library}")
     source = path.read_text(encoding="utf-8-sig")
+    forms = {}
     for start, end in _root_forms(source):
         form = source[start:end]
         match = re.match(r"\(symbol\s+" + _QUOTED, form)
-        if match is None or json.loads(match.group(1)) != name:
-            continue
-        if re.search(r"\(extends\s", form):
-            raise ValueError(f"Inherited symbol is not supported yet: {identifier}")
+        if match is not None:
+            forms[json.loads(match.group(1))] = form
+
+    def merged_symbol(symbol_name, visited=()):
+        if symbol_name in visited:
+            raise ValueError(f"Cyclic symbol inheritance: {identifier}")
+        form = forms.get(symbol_name)
+        if form is None:
+            raise ValueError(f"Inherited symbol not found: {library}:{symbol_name}")
+        children = [form[a:b] for a, b in _root_forms(form)]
+        parent = next((json.loads(match.group(1)) for child in children
+                       if (match := re.match(r"\(extends\s+" + _QUOTED, child))), None)
+        if parent is None:
+            return form
+        inherited = merged_symbol(parent, (*visited, symbol_name))
+        parent_children = [inherited[a:b] for a, b in _root_forms(inherited)]
+        overrides = {}
+        for child in children:
+            if child.startswith("(extends "):
+                continue
+            key = re.match(r"\(([A-Za-z0-9_]+)", child).group(1)
+            if key == "property":
+                field = re.match(r"\(property\s+" + _QUOTED, child)
+                key = (key, json.loads(field.group(1))) if field else key
+            elif key == "symbol":
+                child_name = json.loads(re.match(r"\(symbol\s+" + _QUOTED, child).group(1))
+                key = (key, child_name.rsplit("_", 2)[-2:])
+            overrides[str(key)] = child
+        merged = []
+        for child in parent_children:
+            key = re.match(r"\(([A-Za-z0-9_]+)", child).group(1)
+            if key == "property":
+                field = re.match(r"\(property\s+" + _QUOTED, child)
+                key = (key, json.loads(field.group(1))) if field else key
+            elif key == "symbol":
+                match = re.match(r"\(symbol\s+" + _QUOTED, child)
+                child_name = json.loads(match.group(1))
+                key = (key, child_name.rsplit("_", 2)[-2:])
+                child = child[:match.start(1)] + _quote(symbol_name + "_" + "_".join(child_name.rsplit("_", 2)[-2:])) + child[match.end(1):]
+            if str(key) not in overrides:
+                merged.append(child)
+        merged.extend(overrides.values())
+        return "(symbol " + _quote(symbol_name) + "\n" + "\n".join(merged) + "\n)"
+
+    form = merged_symbol(name)
+    match = re.match(r"\(symbol\s+" + _QUOTED, form)
+    if match is not None:
         pins = {}
+        pin_names = {}
+        pin_units = {}
+        unit_numbers = set()
         for unit_start, unit_end in _root_forms(form):
             unit = form[unit_start:unit_end]
             unit_name = re.match(r"\(symbol\s+" + _QUOTED, unit)
             if unit_name is None:
                 continue
             suffix = json.loads(unit_name.group(1)).rsplit("_", 2)
-            if len(suffix) != 3 or suffix[2] != "1":
+            if len(suffix) != 3 or suffix[2] not in ("0", "1"):
                 continue
-            if suffix[1] not in ("0", "1"):
-                raise ValueError(f"Multi-unit symbol is not supported yet: {identifier}")
+            if not suffix[1].isdigit():
+                continue
+            unit_number = int(suffix[1])
+            if unit_number:
+                unit_numbers.add(unit_number)
             for pin_start, pin_end in _root_forms(unit):
                 pin = unit[pin_start:pin_end]
                 if not pin.startswith("(pin "):
                     continue
                 number = _PIN_NUMBER.search(pin)
+                name_match = _PIN_NAME.search(pin)
                 at = _PIN_AT.search(pin)
-                if number is None or at is None:
+                if number is None or name_match is None or at is None:
                     raise ValueError(f"Cannot read pins of {identifier}")
                 pin_number = json.loads(number.group(1))
+                pin_name = json.loads(name_match.group(1))
                 if pin_number in pins:
-                    raise ValueError(f"Duplicate pin number {pin_number} in {identifier}")
+                    if (pin_units[pin_number] == unit_number and
+                            pins[pin_number] == (float(at.group(1)), float(at.group(2))) and
+                            pin_names[pin_number] == pin_name):
+                        continue
+                    raise ValueError(f"Duplicate pin number {pin_number} in {identifier}; shared pins need review")
                 pins[pin_number] = (float(at.group(1)), float(at.group(2)))
+                pin_names[pin_number] = pin_name
+                pin_units[pin_number] = unit_number
         if not pins:
             raise ValueError(f"Symbol has no supported pins: {identifier}")
         embedded = form[:match.start(1)] + _quote(identifier) + form[match.end(1):]
-        return embedded, pins
+        return embedded, pins, pin_names, pin_units, sorted(unit_numbers) or [1]
     raise ValueError(f"Symbol not found: {identifier}")
 
 
@@ -148,7 +213,7 @@ def validate_design(spec, project_dir, *, symbol_root=None, footprint_root=None)
         value = item.get("value")
         if not isinstance(identifier, str) or not isinstance(footprint, str) or not isinstance(value, str) or not value.strip():
             raise ValueError(f"Incomplete component {ref}")
-        embedded, pins = _library_symbol(identifier, symbol_root, project_symbols)
+        embedded, pins, pin_names, pin_units, units = _library_symbol(identifier, symbol_root, project_symbols)
         found = find_footprint(project_dir, footprint, footprint_root)
         if found is None:
             raise ValueError(f"Footprint not installed for {ref}: {footprint}")
@@ -166,11 +231,32 @@ def validate_design(spec, project_dir, *, symbol_root=None, footprint_root=None)
             raise ValueError(f"Invalid PCB side for {ref}: {side}")
         if x < 20 or y < 20:
             raise ValueError(f"Component {ref} is too close to the sheet edge")
+        if len(units) > 12:
+            raise ValueError(f"Too many symbol units for {ref}")
+        unit_positions = item.get("unit_positions", {})
+        if not isinstance(unit_positions, dict) or any(str(unit) not in map(str, units)
+                                                        for unit in unit_positions):
+            raise ValueError(f"Invalid unit positions for {ref}")
+        positions = {}
+        for index, unit in enumerate(units):
+            requested = unit_positions.get(str(unit), {})
+            if not isinstance(requested, dict):
+                raise ValueError(f"Invalid unit position for {ref} unit {unit}")
+            unit_x = _number(requested.get("x_mm", x + index * 20))
+            unit_y = _number(requested.get("y_mm", y))
+            if unit_x < 20 or unit_y < 20:
+                raise ValueError(f"Unit {ref}.{unit} is too close to the sheet edge")
+            positions[unit] = (unit_x, unit_y)
+        symbol_uuid = str(uuid.uuid4())
         resolved[ref] = {"source": item, "embedded": embedded, "pins": pins,
+                         "pin_names": pin_names,
+                         "pin_units": pin_units, "units": units, "unit_positions": positions,
                          "symbol_file": str(project_symbols.get(identifier.split(":", 1)[0], "")),
                          "footprint_file": found["file"], "footprint_source": found["source"],
                          "x": x, "y": y, "pcb_x": pcb_x, "pcb_y": pcb_y,
-                         "side": side, "uuid": str(uuid.uuid4())}
+                         "side": side, "uuid": symbol_uuid,
+                         "unit_uuids": {unit: symbol_uuid if unit == units[0] else str(uuid.uuid4())
+                                        for unit in units}}
     connections = {}
     seen_names = set()
     multi_endpoint_net = False
@@ -226,23 +312,35 @@ def render_schematic(spec, resolved, connections):
     parts.append("  )")
     for ref, item in resolved.items():
         component = item["source"]
-        x, y = item["x"], item["y"]
-        parts.extend((
-            f'  (symbol (lib_id {_quote(component["symbol"])}) (at {_mm(x)} {_mm(y)} 0) (unit 1)',
-            '    (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no)',
-            f'    (uuid "{item["uuid"]}")',
-            f'    (property "Reference" {_quote(ref)} (at {_mm(x + 5.08)} {_mm(y - 5.08)} 0)'
-            ' (effects (font (size 1.27 1.27))))',
-            f'    (property "Value" {_quote(component["value"])} (at {_mm(x + 5.08)} {_mm(y)} 0)'
-            ' (effects (font (size 1.27 1.27))))',
-            f'    (property "Footprint" {_quote(component["footprint"])} (at {_mm(x)} {_mm(y)} 0)'
-            ' (effects (font (size 1.27 1.27)) (hide yes)))',
-            "  )",
-        ))
+        for unit in item["units"]:
+            x, y = item["unit_positions"][unit]
+            parts.extend((
+                f'  (symbol (lib_id {_quote(component["symbol"])}) (at {_mm(x)} {_mm(y)} 0) (unit {unit})',
+                '    (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no)',
+                f'    (uuid "{item["unit_uuids"][unit]}")',
+                f'    (property "Reference" {_quote(ref)} (at {_mm(x + 5.08)} {_mm(y - 5.08)} 0)'
+                ' (effects (font (size 1.27 1.27))))',
+                f'    (property "Value" {_quote(component["value"])} (at {_mm(x + 5.08)} {_mm(y)} 0)'
+                ' (effects (font (size 1.27 1.27))))',
+                f'    (property "Footprint" {_quote(component["footprint"])} (at {_mm(x)} {_mm(y)} 0)'
+                ' (effects (font (size 1.27 1.27)) (hide yes)))',
+            ))
+            part = component.get("part", {})
+            if part.get("datasheet_url"):
+                parts.append(f'    (property "Datasheet" {_quote(part["datasheet_url"])}'
+                             f' (at {_mm(x)} {_mm(y)} 0)'
+                             ' (effects (font (size 1.27 1.27)) (hide yes)))')
+            if part.get("mpn"):
+                parts.append(f'    (property "MPN" {_quote(part["mpn"])}'
+                             f' (at {_mm(x)} {_mm(y)} 0)'
+                             ' (effects (font (size 1.27 1.27)) (hide yes)))')
+            parts.append("  )")
     for (ref, pin), name in connections.items():
         item = resolved[ref]
         pin_x, pin_y = item["pins"][pin]
-        x, y = item["x"] + pin_x, item["y"] - pin_y
+        unit = item["pin_units"][pin]
+        x0, y0 = item["unit_positions"][unit if unit else item["units"][0]]
+        x, y = x0 + pin_x, y0 - pin_y
         justify = "right" if pin_x < 0 else "left"
         parts.append(f'  (label {_quote(name)} (at {_mm(x)} {_mm(y)} 0)'
                      f' (effects (font (size 1.27 1.27)) (justify {justify})) (uuid "{uuid.uuid4()}"))')
@@ -250,7 +348,9 @@ def render_schematic(spec, resolved, connections):
         ref, pin = item["ref"], str(item["pin"])
         part = resolved[ref]
         pin_x, pin_y = part["pins"][pin]
-        x, y = part["x"] + pin_x, part["y"] - pin_y
+        unit = part["pin_units"][pin]
+        x0, y0 = part["unit_positions"][unit if unit else part["units"][0]]
+        x, y = x0 + pin_x, y0 - pin_y
         parts.append(f'  (no_connect (at {_mm(x)} {_mm(y)}) (uuid "{uuid.uuid4()}"))')
     parts.extend(('  (sheet_instances (path "/" (page "1")))', '  (embedded_fonts no)', ')'))
     return "\n".join(parts) + "\n"
@@ -268,7 +368,7 @@ def _verify_netlist(root, resolved, connections):
     for ref, item in resolved.items():
         if exported[ref].findtext("footprint", default="") != item["source"]["footprint"]:
             raise ValueError(f"KiCad exported a different footprint for {ref}")
-        if exported[ref].findtext("tstamps", default="") != item["uuid"]:
+        if set(exported[ref].findtext("tstamps", default="").split()) != set(item["unit_uuids"].values()):
             raise ValueError(f"KiCad exported a different schematic ID for {ref}")
     actual = {}
     connected = {}
@@ -289,7 +389,7 @@ def _verify_netlist(root, resolved, connections):
             raise ValueError(f"KiCad found unintended pins on net {name}")
 
 
-def _verify_board_manifest(manifest, resolved, outline):
+def _verify_board_manifest(manifest, resolved, outline, routing=None):
     actual = manifest.get("components", {})
     if set(actual) != set(resolved):
         raise ValueError("Generated PCB has missing or extra footprints")
@@ -316,20 +416,26 @@ def _verify_board_manifest(manifest, resolved, outline):
                     bounds[0] < board_box[0] - 0.001 or bounds[1] < board_box[1] - 0.001 or
                     bounds[2] > board_box[2] + 0.001 or bounds[3] > board_box[3] + 0.001):
                 raise ValueError(f"Footprint {ref} extends outside the requested PCB outline")
+    if routing is not None and manifest.get("copper_layers") != max(2, routing["requested_layers"]):
+        raise ValueError("Generated PCB copper layer count differs from routing requirements")
 
 
-def _write_pcb(staging, name, resolved, connections, outline, language, token):
+def _write_pcb(staging, name, resolved, connections, outline, language, token, routing=None):
     if os.name == "nt":
         bundled = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "KiCad/10.0/bin/python.exe"
         interpreter = bundled if bundled.is_file() else Path(sys.executable)
     else:
         interpreter = Path(sys.executable)
     payload = {"components": [], "connections": {f"{ref}.{pin}": "/" + net for (ref, pin), net in connections.items()},
-               "outline": outline}
+               "outline": outline, "copper_layers": max(2, routing["requested_layers"]) if routing else None}
     for ref, item in resolved.items():
         path = Path(item["footprint_file"])
+        part = item["source"].get("part", {})
         payload["components"].append({"ref": ref, "value": item["source"]["value"],
                                       "footprint_id": item["source"]["footprint"],
+                                      "fields": {key: value for key, value in (
+                                          ("Datasheet", part.get("datasheet_url")),
+                                          ("MPN", part.get("mpn"))) if value},
                                       "directory": str(path.parent), "name": path.stem,
                                       "uuid": item["uuid"], "side": item["side"],
                                       "pcb_x_mm": item["pcb_x"], "pcb_y_mm": item["pcb_y"]})
@@ -347,7 +453,7 @@ def _write_pcb(staging, name, resolved, connections, outline, language, token):
     if marker is None:
         raise RuntimeError("KiCad did not report generated PCB facts")
     manifest = json.loads(marker)
-    _verify_board_manifest(manifest, resolved, outline)
+    _verify_board_manifest(manifest, resolved, outline, routing)
     return manifest
 
 
@@ -378,6 +484,7 @@ def stage_new_design(spec, parent, *, language="en", token=None, symbol_root=Non
         raise ValueError(f"Project folder not found: {parent}")
     resolved, connections = validate_design(spec, parent, symbol_root=symbol_root,
                                             footprint_root=footprint_root)
+    part_review = review_components(spec, resolved)
     outline = spec.get("board")
     if outline is not None:
         if not isinstance(outline, dict) or set(outline) != {"width_mm", "height_mm"}:
@@ -390,7 +497,9 @@ def stage_new_design(spec, parent, *, language="en", token=None, symbol_root=Non
                     20 <= item["pcb_y"] <= 20 + outline["height_mm"]):
                 raise ValueError(f"Footprint centre {ref} is outside the requested board size")
     staging = Path(tempfile.mkdtemp(prefix=".caid-design-", dir=parent))
+    guard = None
     try:
+        guard = StageGuard(staging, "design")
         name = spec["name"]
         schematic = staging / (name + ".kicad_sch")
         schematic.write_text(render_schematic(spec, resolved, connections), encoding="utf-8")
@@ -423,11 +532,26 @@ def stage_new_design(spec, parent, *, language="en", token=None, symbol_root=Non
                                f'(uri "${{KIPRJMOD}}/{target.name}")(options "")(descr ""))')
             (staging / "sym-lib-table").write_text("(sym_lib_table\n  " + "\n  ".join(entries) + "\n)\n",
                                                      encoding="utf-8")
-        (staging / (name + ".kicad_pro")).write_text("{}\n", encoding="utf-8")
+        project_file = staging / (name + ".kicad_pro")
+        project_file.write_text("{}\n", encoding="utf-8")
+        if spec.get("routing") is not None:
+            synchronize_project_rules(project_file, spec["routing"])
         erc = _erc_counts(schematic, staging / "erc.json", language, token)
-        board_facts = _write_pcb(staging, name, resolved, connections, outline, language, token)
+        board_facts = _write_pcb(staging, name, resolved, connections, outline, language, token,
+                                 spec.get("routing"))
         drc = _check_pcb_parity(staging, name, language, token)
         (staging / "design.json").write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        review = {"schema_version": 1, "design": name,
+                  "checks": {"netlist_pin_nets": "passed", "pcb_parity": "passed",
+                             "board_readback": "passed", "erc_errors": erc[0],
+                             "erc_warnings": erc[1], "drc_errors": drc[0],
+                             "drc_warnings": drc[1]},
+                  "part_evidence": part_review,
+                  "open_questions": spec.get("design_brief", {}).get("deferred_questions", [])
+                  if isinstance(spec.get("design_brief"), dict) else [],
+                  "manufacturing_approval": "not_granted"}
+        (staging / "CAID-REVIEW.json").write_text(
+            json.dumps(review, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         (staging / "CAID-REVIEW.txt").write_text(
             f"CAID design draft: {name}\nComponents: {len(resolved)}\nNets: {len(spec['nets'])}\n"
             + (f"User requirements: {json.dumps(spec['design_brief'], ensure_ascii=False)}\n"
@@ -437,6 +561,11 @@ def stage_new_design(spec, parent, *, language="en", token=None, symbol_root=Non
             f"KiCad ERC: {erc[0]} errors, {erc[1]} warnings\n"
             f"KiCad DRC: {drc[0]} errors, {drc[1]} warnings; schematic parity: 0 differences\n"
             f"Saved PCB readback: {len(board_facts['components'])} footprints, outline {board_facts['outline']}\n"
+            f"Part evidence: {sum(item['status'] == 'documented' for item in part_review)} documented, "
+            f"{sum(item['status'] == 'needs_review' for item in part_review)} need review.\n"
+            + (f"KiCad routing rules synchronized: {json.dumps(spec['routing']['limits_mm'])}; "
+               f"{board_facts['copper_layers']} copper layers. Fabricator limits remain unverified.\n"
+               if spec.get("routing") else "Routing rules are open; set board constraints before routing.\n") +
             "All proposed pin/net assignments were verified against KiCad's exported netlist.\n"
             "The PCB has footprints and pad nets, but no routed traces. Open this project and review PCB parity with F8.\n"
             "Review electrical pinout, footprints, placement and all ERC/DRC findings before manufacture.\n",
@@ -447,9 +576,19 @@ def stage_new_design(spec, parent, *, language="en", token=None, symbol_root=Non
         destination.parent.mkdir(exist_ok=True)
         if destination.exists():
             raise FileExistsError(f"Design already exists: {destination}")
+        if token:
+            token.check()
+        guard.close()
         staging.replace(destination)
         return {"directory": str(destination), "name": name, "components": len(resolved),
                 "nets": len(spec["nets"]), "erc_errors": erc[0], "erc_warnings": erc[1],
-                "drc_errors": drc[0], "drc_warnings": drc[1]}
+                "drc_errors": drc[0], "drc_warnings": drc[1],
+                "routing": spec.get("routing"), "part_evidence": part_review,
+                "parts_needing_review": sum(item["status"] == "needs_review" for item in part_review),
+                "open_questions": len(review["open_questions"])}
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        try:
+            if guard is not None:
+                guard.close()
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)

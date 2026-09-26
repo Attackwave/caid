@@ -14,12 +14,16 @@ try:
     from .diagnostics import _cli_path
     from .process import run_command
     from .project_brief import load_brief
+    from .project_recovery import StageGuard
     from .routing import preflight, validate_contract
+    from .project_rules import synchronize_project_rules
 except ImportError:
     from diagnostics import _cli_path
     from process import run_command
     from project_brief import load_brief
+    from project_recovery import StageGuard
     from routing import preflight, validate_contract
+    from project_rules import synchronize_project_rules
 
 
 def _interpreter():
@@ -33,19 +37,47 @@ def _interpreter():
 def _project_copy(source, destination, board_name):
     destination.mkdir(parents=True, exist_ok=True)
     stem = Path(board_name).stem
-    for name in (board_name, stem + ".kicad_pro", stem + ".kicad_sch",
+    for name in (board_name, stem + ".kicad_pro", stem + ".kicad_sch", stem + ".kicad_dru",
                  "CAID-Projekt.json", "sym-lib-table", "fp-lib-table"):
         path = source / name
         if path.is_file():
             shutil.copy2(path, destination / name)
+    for path in source.glob("*.kicad_sym"):
+        if path.is_file():
+            shutil.copy2(path, destination / path.name)
     for path in source.glob("*.pretty"):
         if path.is_dir():
             shutil.copytree(path, destination / path.name)
 
 
+def _source_fingerprints(project, board_name):
+    """Fingerprint every project input that the routing copy can consume."""
+    stem = Path(board_name).stem
+    names = (board_name, stem + ".kicad_pro", stem + ".kicad_sch",
+             stem + ".kicad_dru", "CAID-Projekt.json", "sym-lib-table",
+             "fp-lib-table")
+    paths = [project / name for name in names]
+    paths.extend(project.glob("*.kicad_sym"))
+    for library in project.glob("*.pretty"):
+        if library.is_dir():
+            paths.extend(path for path in library.rglob("*") if path.is_file())
+    return {path.relative_to(project).as_posix(): sha256(path.read_bytes()).hexdigest()
+            for path in paths if path.is_file()}
+
+
+def _require_source_unchanged(project, board_name, fingerprints):
+    current = _source_fingerprints(project, board_name)
+    if current != fingerprints:
+        changed = sorted(name for name in fingerprints.keys() | current.keys()
+                         if fingerprints.get(name) != current.get(name))
+        raise ValueError("Project input changed during routing: " +
+                         ", ".join(changed[:5]) + "; restart from the saved project")
+
+
 def _drc(path, language, token):
     report = path.parent / (path.stem + ".caid-drc.json")
-    command = [_cli_path(language), "pcb", "drc", "--format", "json", "--output", str(report)]
+    command = [_cli_path(language), "pcb", "drc", "--format", "json", "--refill-zones",
+               "--output", str(report)]
     if (path.parent / (path.stem + ".kicad_sch")).is_file():
         command.append("--schematic-parity")
     command.append(str(path))
@@ -98,6 +130,11 @@ def read_saved_board_snapshot(project_path, board_name, token=None):
         return _worker({"action": "inspect", "source": str(source)}, Path(temporary), token)
 
 
+def _routing_output_parent(project):
+    """Keep follow-up passes beside the previous copy, not nested within it."""
+    return project.parent if project.parent.name == "CAID-Routing" else project / "CAID-Routing"
+
+
 def route_project(project_path, board_name, contract, net_name=None, *, max_nets=20,
                   language="en", token=None, progress=None):
     """Return a reviewed route copy; original files remain untouched."""
@@ -116,11 +153,17 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
     source = project / board_name
     if not source.is_file() or source.suffix != ".kicad_pcb":
         raise FileNotFoundError(source)
-    source_hash = sha256(source.read_bytes()).hexdigest()
+    source_fingerprints = _source_fingerprints(project, board_name)
+    source_hash = source_fingerprints[board_name]
     staging = Path(tempfile.mkdtemp(prefix=".caid-routing-", dir=project))
+    guard = None
     try:
+        guard = StageGuard(staging, "routing")
         _project_copy(project, staging, board_name)
+        _require_source_unchanged(project, board_name, source_fingerprints)
         working = staging / board_name
+        synchronize_project_rules(staging / (Path(board_name).stem + ".kicad_pro"),
+                                  contract, preserve_stricter=True)
         baseline = _drc(working, language, token)
         board_snapshot = _worker({"action": "inspect", "source": str(working)}, staging, token)
         brief = load_brief(project)
@@ -130,8 +173,9 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
         blockers = preflight(contract, board_snapshot, baseline)
         if blockers:
             raise ValueError("Source PCB failed routing preflight: " + "; ".join(blockers[:6]))
-        candidates = ([net_name] if net_name else
-                      _worker({"action": "list", "source": str(working)}, staging, token))[:max_nets]
+        all_candidates = ([net_name] if net_name else
+                          _worker({"action": "list", "source": str(working)}, staging, token))
+        candidates = all_candidates[:max_nets]
         if not candidates:
             raise ValueError("No unrouted nets with 2 to 32 pads found")
         accepted = []
@@ -160,16 +204,16 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
                                      f"{len(checked.get('unconnected_items', []))} open")
                 shutil.copy2(output, working)
                 report = checked
-                accepted.append(result)
+                accepted.append({key: value for key, value in result.items()
+                                 if key not in {"source", "destination"}})
             except ValueError as exc:
                 skipped.append({"net": name, "reason": str(exc)[:500]})
         if not accepted:
             reasons = "; ".join(f"{item['net']}: {item['reason']}" for item in skipped[:3])
             raise ValueError("No DRC-clean route found. " + reasons)
-        if sha256(source.read_bytes()).hexdigest() != source_hash:
-            raise ValueError("Source PCB changed during routing; restart from the saved board")
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        parent = project / "CAID-Routing"
+        _require_source_unchanged(project, board_name, source_fingerprints)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+        parent = _routing_output_parent(project)
         parent.mkdir(exist_ok=True)
         destination = parent / f"{Path(board_name).stem}-{stamp}"
         if destination.exists():
@@ -179,15 +223,28 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
             shutil.rmtree(candidate_dir)
         (staging / "CAID-ROUTING.json").write_text(json.dumps({
             "source": str(source), "source_sha256": source_hash,
+            "source_files_sha256": source_fingerprints,
             "contract": contract, "accepted": accepted,
             "skipped": skipped, "unconnected_before": len(baseline.get("unconnected_items", [])),
             "unconnected_after": len(report.get("unconnected_items", [])),
-            "remaining_scope": "nets with 2 to 32 pads and no existing copper"},
+            "eligible_before": len(all_candidates), "attempted": len(candidates),
+            "unattempted": max(0, len(all_candidates) - len(candidates)),
+            "remaining_scope": "nets with 2 to 32 pads and open copper connections"},
             ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if token:
+            token.check()
+        _require_source_unchanged(project, board_name, source_fingerprints)
+        guard.close()
         staging.replace(destination)
         return {"directory": str(destination), "accepted": accepted, "skipped": skipped,
+                "eligible_before": len(all_candidates), "attempted": len(candidates),
+                "unattempted": max(0, len(all_candidates) - len(candidates)),
                 "unconnected_before": len(baseline.get("unconnected_items", [])),
                 "unconnected_after": len(report.get("unconnected_items", []))}
     finally:
-        if staging.exists():
-            shutil.rmtree(staging)
+        try:
+            if guard is not None:
+                guard.close()
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
