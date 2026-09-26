@@ -4,7 +4,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from caid_chat.project_brief import set_requirement
-from caid_chat.route_project import _findings, _project_copy, _routing_output_parent, route_project
+from caid_chat.route_project import (_findings, _project_copy, _routing_output_parent,
+                                     _source_fingerprints, route_project)
 from caid_chat.route_worker import _search_windows
 from caid_chat.routing import default_contract, set_layers, set_limits
 
@@ -38,6 +39,52 @@ class RouteProjectTests(unittest.TestCase):
             target = Path(directory) / "copy"
             _project_copy(source, target, "board.kicad_pcb")
             self.assertEqual((target / "Custom.kicad_sym").read_text(), "symbols")
+
+    def test_source_fingerprints_include_project_support_and_library_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            (project / "board.kicad_pcb").write_text("board", encoding="utf-8")
+            (project / "board.kicad_sch").write_text("circuit", encoding="utf-8")
+            library = project / "Custom.pretty"
+            library.mkdir()
+            footprint = library / "Part.kicad_mod"
+            footprint.write_text("first", encoding="utf-8")
+            before = _source_fingerprints(project, "board.kicad_pcb")
+            self.assertEqual(set(before), {"board.kicad_pcb", "board.kicad_sch",
+                                           "Custom.pretty/Part.kicad_mod"})
+            footprint.write_text("second", encoding="utf-8")
+            self.assertNotEqual(before, _source_fingerprints(project, "board.kicad_pcb"))
+
+    def test_routing_rejects_schematic_changed_during_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            board = project / "board.kicad_pcb"
+            schematic = project / "board.kicad_sch"
+            board.write_text("original", encoding="utf-8")
+            schematic.write_text("original", encoding="utf-8")
+            contract = set_limits(set_layers(default_contract(), 2),
+                                  ["0.2", "0.2", "0.6", "0.3", "0.5"])
+            reports = iter(({"violations": [], "schematic_parity": [],
+                             "unconnected_items": [{}]},
+                            {"violations": [], "schematic_parity": [],
+                             "unconnected_items": []}))
+
+            def worker(payload, _staging, _token):
+                action = payload.get("action")
+                if action == "inspect":
+                    return {"copper_layers": 2, "outline_mm": [0, 0, 100, 100]}
+                if action == "list":
+                    return ["TEST"]
+                Path(payload["destination"]).write_text("routed", encoding="utf-8")
+                schematic.write_text("changed", encoding="utf-8")
+                return {"net": "TEST"}
+
+            with patch("caid_chat.route_project._drc", side_effect=lambda *args: next(reports)), patch(
+                    "caid_chat.route_project._worker", side_effect=worker):
+                with self.assertRaisesRegex(ValueError, "board.kicad_sch"):
+                    route_project(project, board.name, contract)
+            self.assertEqual(board.read_text(), "original")
+            self.assertFalse((project / "CAID-Routing").exists())
 
     def test_new_drc_finding_is_distinct_from_existing(self):
         old = {"violations": [{"severity": "warning", "type": "courtyard",

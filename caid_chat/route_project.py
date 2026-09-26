@@ -48,6 +48,30 @@ def _project_copy(source, destination, board_name):
             shutil.copytree(path, destination / path.name)
 
 
+def _source_fingerprints(project, board_name):
+    """Fingerprint every project input that the routing copy can consume."""
+    stem = Path(board_name).stem
+    names = (board_name, stem + ".kicad_pro", stem + ".kicad_sch",
+             stem + ".kicad_dru", "CAID-Projekt.json", "sym-lib-table",
+             "fp-lib-table")
+    paths = [project / name for name in names]
+    paths.extend(project.glob("*.kicad_sym"))
+    for library in project.glob("*.pretty"):
+        if library.is_dir():
+            paths.extend(path for path in library.rglob("*") if path.is_file())
+    return {path.relative_to(project).as_posix(): sha256(path.read_bytes()).hexdigest()
+            for path in paths if path.is_file()}
+
+
+def _require_source_unchanged(project, board_name, fingerprints):
+    current = _source_fingerprints(project, board_name)
+    if current != fingerprints:
+        changed = sorted(name for name in fingerprints.keys() | current.keys()
+                         if fingerprints.get(name) != current.get(name))
+        raise ValueError("Project input changed during routing: " +
+                         ", ".join(changed[:5]) + "; restart from the saved project")
+
+
 def _drc(path, language, token):
     report = path.parent / (path.stem + ".caid-drc.json")
     command = [_cli_path(language), "pcb", "drc", "--format", "json", "--refill-zones",
@@ -127,10 +151,12 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
     source = project / board_name
     if not source.is_file() or source.suffix != ".kicad_pcb":
         raise FileNotFoundError(source)
-    source_hash = sha256(source.read_bytes()).hexdigest()
+    source_fingerprints = _source_fingerprints(project, board_name)
+    source_hash = source_fingerprints[board_name]
     staging = Path(tempfile.mkdtemp(prefix=".caid-routing-", dir=project))
     try:
         _project_copy(project, staging, board_name)
+        _require_source_unchanged(project, board_name, source_fingerprints)
         working = staging / board_name
         synchronize_project_rules(staging / (Path(board_name).stem + ".kicad_pro"),
                                   contract, preserve_stricter=True)
@@ -181,8 +207,7 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
         if not accepted:
             reasons = "; ".join(f"{item['net']}: {item['reason']}" for item in skipped[:3])
             raise ValueError("No DRC-clean route found. " + reasons)
-        if sha256(source.read_bytes()).hexdigest() != source_hash:
-            raise ValueError("Source PCB changed during routing; restart from the saved board")
+        _require_source_unchanged(project, board_name, source_fingerprints)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
         parent = _routing_output_parent(project)
         parent.mkdir(exist_ok=True)
@@ -194,6 +219,7 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
             shutil.rmtree(candidate_dir)
         (staging / "CAID-ROUTING.json").write_text(json.dumps({
             "source": str(source), "source_sha256": source_hash,
+            "source_files_sha256": source_fingerprints,
             "contract": contract, "accepted": accepted,
             "skipped": skipped, "unconnected_before": len(baseline.get("unconnected_items", [])),
             "unconnected_after": len(report.get("unconnected_items", [])),
@@ -203,8 +229,7 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
             ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if token:
             token.check()
-        if sha256(source.read_bytes()).hexdigest() != source_hash:
-            raise ValueError("Source PCB changed during routing; restart from the saved board")
+        _require_source_unchanged(project, board_name, source_fingerprints)
         staging.replace(destination)
         return {"directory": str(destination), "accepted": accepted, "skipped": skipped,
                 "eligible_before": len(all_candidates), "attempted": len(candidates),
