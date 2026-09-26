@@ -15,15 +15,11 @@ GRID_MM = 0.25
 MAX_VISITS = 250_000
 
 
-def outline_rect(board, pcbnew):
-    edges = [item for item in board.GetDrawings() if item.GetLayer() == pcbnew.Edge_Cuts]
-    if len(edges) == 1 and edges[0].GetShape() in (pcbnew.SHAPE_T_RECT, pcbnew.SHAPE_T_RECTANGLE):
-        start, end = edges[0].GetStart(), edges[0].GetEnd()
-        return (min(pcbnew.ToMM(start.x), pcbnew.ToMM(end.x)),
-                min(pcbnew.ToMM(start.y), pcbnew.ToMM(end.y)),
-                max(pcbnew.ToMM(start.x), pcbnew.ToMM(end.x)),
-                max(pcbnew.ToMM(start.y), pcbnew.ToMM(end.y)))
-    raise ValueError("Routing needs a single rectangular Edge.Cuts outline")
+def board_outline(board, pcbnew):
+    outline = pcbnew.SHAPE_POLY_SET()
+    if not board.GetBoardPolygonOutlines(outline, False) or not outline.OutlineCount():
+        raise ValueError("Routing needs a closed Edge.Cuts outline")
+    return outline, _bbox_mm(outline.BBox(), pcbnew)
 
 
 def enabled_layers(board, pcbnew, names):
@@ -85,18 +81,27 @@ def _coord(index, origin):
 
 
 def _path(board, pcbnew, pads, net_name, layer_ids, contract):
-    left, top, right, bottom = outline_rect(board, pcbnew)
+    outline, (left, top, right, bottom) = board_outline(board, pcbnew)
     edge = contract["limits_mm"]["edge_clearance_mm"]
-    origin = (left + edge, top + edge)
-    count = (math.floor((right - left - 2 * edge) / GRID_MM) + 1,
-             math.floor((bottom - top - 2 * edge) / GRID_MM) + 1)
+    width = contract["limits_mm"]["track_width_mm"]
+    outline.Deflate(pcbnew.FromMM(edge + width / 2 + GRID_MM),
+                    pcbnew.CORNER_STRATEGY_ROUND_ALL_CORNERS, pcbnew.FromMM(0.01))
+    origin = (left, top)
+    count = (math.floor((right - left) / GRID_MM) + 1,
+             math.floor((bottom - top) / GRID_MM) + 1)
     if min(count) < 2 or count[0] * count[1] * len(layer_ids) > 2_000_000:
         raise ValueError("Board grid is empty or too large for this routing pass")
     clearance = contract["limits_mm"]["clearance_mm"]
-    width = contract["limits_mm"]["track_width_mm"]
     inflation = clearance + width / 2 + GRID_MM / 2
     blocked = set()
     via_blocked = set()
+    for x in range(count[0]):
+        for y in range(count[1]):
+            position = pcbnew.VECTOR2I(pcbnew.FromMM(left + x * GRID_MM),
+                                       pcbnew.FromMM(top + y * GRID_MM))
+            if not outline.Contains(position):
+                for layer_index in range(len(layer_ids)):
+                    blocked.add((x, y, layer_index))
     for pad in board.GetPads():
         rect = _bbox_mm(pad.GetBoundingBox(), pcbnew)
         for layer_index, layer_id in enumerate(layer_ids):
@@ -123,6 +128,26 @@ def _path(board, pcbnew, pads, net_name, layer_ids, contract):
                     _mark_segment(blocked, (pcbnew.ToMM(a.x), pcbnew.ToMM(a.y)),
                                   (pcbnew.ToMM(b.x), pcbnew.ToMM(b.y)),
                                   pcbnew.ToMM(item.GetWidth()), layer_index, origin, count, inflation)
+    for zone in board.Zones():
+        if zone.GetNetname() == net_name:
+            continue
+        for layer_index, layer_id in enumerate(layer_ids):
+            if not zone.GetLayerSet().Contains(layer_id):
+                continue
+            if not zone.HasFilledPolysForLayer(layer_id):
+                raise ValueError("Fill copper zones before routing")
+            polygon = pcbnew.SHAPE_POLY_SET(zone.GetFilledPolysList(layer_id))
+            polygon.Inflate(pcbnew.FromMM(inflation),
+                            pcbnew.CORNER_STRATEGY_ROUND_ALL_CORNERS, pcbnew.FromMM(0.01))
+            x1, y1, x2, y2 = _bbox_mm(polygon.BBox(), pcbnew)
+            for x in range(max(0, math.floor((x1 - left) / GRID_MM)),
+                           min(count[0], math.ceil((x2 - left) / GRID_MM) + 1)):
+                for y in range(max(0, math.floor((y1 - top) / GRID_MM)),
+                               min(count[1], math.ceil((y2 - top) / GRID_MM) + 1)):
+                    position = pcbnew.VECTOR2I(pcbnew.FromMM(left + x * GRID_MM),
+                                               pcbnew.FromMM(top + y * GRID_MM))
+                    if polygon.Contains(position):
+                        blocked.add((x, y, layer_index))
     starts = []
     goals = set()
     for index, pad in enumerate(pads):
@@ -244,6 +269,24 @@ def _route_pair(board, pcbnew, pads, net_name, layers, contract):
     return segments, vias, visited
 
 
+def _pad_clusters(board, pcbnew, pads):
+    """Group pads using KiCad's existing copper connectivity."""
+    connectivity = board.GetConnectivity()
+    connectivity.RecalculateRatsnest()
+    by_id = {pad.m_Uuid.AsString(): pad for pad in pads}
+    remaining = set(by_id)
+    clusters = []
+    while remaining:
+        first_id = next(iter(remaining))
+        connected = {item.m_Uuid.AsString() for item in
+                     connectivity.GetConnectedItems(by_id[first_id])
+                     if isinstance(item, pcbnew.PAD)}
+        ids = (connected & remaining) or {first_id}
+        clusters.append([by_id[identifier] for identifier in ids])
+        remaining -= ids
+    return clusters
+
+
 def route_one(source, destination, net_name, contract):
     import pcbnew
     board = pcbnew.LoadBoard(str(source))
@@ -261,10 +304,12 @@ def route_one(source, destination, net_name, contract):
     pads = [pad for pad in board.GetPads() if pad.GetNetname() == net_name]
     if not 2 <= len(pads) <= 32:
         raise ValueError(f"Routing currently supports 2 to 32 pads per net; {net_name} has {len(pads)}")
-    if any(track.GetNetname() == net_name for track in board.GetTracks()):
-        raise ValueError("Net already contains copper; incremental routing is not yet supported")
-    connected = [pads[0]]
-    remaining = pads[1:]
+    clusters = _pad_clusters(board, pcbnew, pads)
+    if len(clusters) < 2:
+        raise ValueError("Net pads are already connected")
+    connected = list(clusters.pop(0))
+    remaining = [pad for cluster in clusters for pad in cluster]
+    cluster_by_pad = {pad.m_Uuid.AsString(): cluster for cluster in clusters for pad in cluster}
     segments = vias = visited = 0
     while remaining:
         pairs = []
@@ -279,8 +324,10 @@ def route_one(source, destination, net_name, contract):
         segments += new_segments
         vias += new_vias
         visited += new_visited
-        connected.append(second)
-        remaining.remove(second)
+        joined = cluster_by_pad[second.m_Uuid.AsString()]
+        connected.extend(joined)
+        joined_ids = {pad.m_Uuid.AsString() for pad in joined}
+        remaining = [pad for pad in remaining if pad.m_Uuid.AsString() not in joined_ids]
     pcbnew.SaveBoard(str(destination), board)
     return {"net": net_name, "pads": len(pads), "segments": segments, "vias": vias, "visited": visited,
             "source": str(source), "destination": str(destination)}
@@ -295,10 +342,9 @@ def candidate_nets(source):
     for pad in board.GetPads():
         if pad.GetNetname():
             groups.setdefault(pad.GetNetname(), []).append(pad)
-    existing = {item.GetNetname() for item in board.GetTracks()}
     candidates = []
     for name, pads in groups.items():
-        if 2 <= len(pads) <= 32 and name not in existing:
+        if 2 <= len(pads) <= 32 and len(_pad_clusters(board, pcbnew, pads)) > 1:
             a, b = (_point(pad, pcbnew) for pad in pads[:2])
             candidates.append((len(pads), math.hypot(a[0] - b[0], a[1] - b[1]), name))
     return [name for _pads, _distance, name in sorted(candidates)]
@@ -311,7 +357,7 @@ def saved_board_snapshot(source):
     if board is None:
         raise ValueError("KiCad could not open the source PCB")
     try:
-        outline = list(outline_rect(board, pcbnew))
+        outline = list(board_outline(board, pcbnew)[1])
     except ValueError:
         outline = None
     tracks = list(board.GetTracks())
@@ -321,7 +367,7 @@ def saved_board_snapshot(source):
                   for item in board.GetFootprints()]
     return {"copper_layers": board.GetCopperLayerCount(), "outline_mm": outline,
             "counts": {"vias": len(vias)},
-            "track_layers": sorted({board.GetLayerName(item.GetLayer()) for item in tracks
+            "track_layers": sorted({pcbnew.LayerName(item.GetLayer()) for item in tracks
                                     if not isinstance(item, pcbnew.PCB_VIA)}),
             "footprints": footprints, "truncated": False}
 

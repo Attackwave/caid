@@ -9,6 +9,9 @@ def write_board(payload, destination):
     import pcbnew
 
     board = pcbnew.BOARD()
+    requested_layers = payload.get("copper_layers")
+    if requested_layers is not None:
+        board.SetCopperLayerCount(requested_layers)
     nets = {}
     for name in sorted(set(payload["connections"].values())):
         net = pcbnew.NETINFO_ITEM(board, name)
@@ -65,7 +68,8 @@ def write_board(payload, destination):
                           "height_mm": abs(pcbnew.ToMM(end.y - start.y))}
     print("CAID_BOARD_MANIFEST=" + json.dumps({"components": actual,
                                                 "outline": actual_outline,
-                                                "edge_items": len(edges)}))
+                                                "edge_items": len(edges),
+                                                "copper_layers": saved.GetCopperLayerCount()}))
 
 
 if __name__ == "__main__":
