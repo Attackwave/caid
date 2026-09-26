@@ -24,6 +24,9 @@ def write_board(payload, destination):
         footprint.SetFPIDAsString(item["footprint_id"])
         footprint.SetReference(item["ref"])
         footprint.SetValue(item["value"])
+        for field, value in item.get("fields", {}).items():
+            footprint.SetField(field, value)
+            footprint.GetField(field).SetVisible(False)
         x = item.get("pcb_x_mm", 35 + (index % 4) * 35)
         y = item.get("pcb_y_mm", 35 + (index // 4) * 35)
         point = pcbnew.VECTOR2I(pcbnew.FromMM(x), pcbnew.FromMM(y))

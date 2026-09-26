@@ -642,7 +642,8 @@ class ChatFrame(wx.Frame):
         if command in ("/routing", "/route", "/routing prüfen", "/route check",
                        "/routing starten", "/route start") or command.startswith((
                            "/routing lagen ", "/route layers ", "/routing regeln ",
-                           "/route rules ", "/routing netz ", "/route net ")):
+                           "/route rules ", "/routing netz ", "/route net ",
+                           "/routing starten ", "/route start ")):
             try:
                 board = self._kicad.get_board()
                 project_path = str(board.document.project.path)
@@ -657,14 +658,25 @@ class ChatFrame(wx.Frame):
                     set_routing(project_path, contract)
                     self._refresh_project_brief()
                 if command in ("/routing starten", "/route start") or command.startswith((
-                        "/routing netz ", "/route net ")):
+                        "/routing netz ", "/route net ", "/routing starten ", "/route start ")):
                     net_name = (message.split(" ", 2)[2].strip() if command.startswith((
                         "/routing netz ", "/route net ")) else None)
                     if net_name == "":
                         raise ValueError("Net name is empty")
+                    max_nets = 20
+                    if command.startswith(("/routing starten ", "/route start ")):
+                        parts = message.split()
+                        if len(parts) != 3:
+                            raise ValueError(self._t("route_pass_size_required"))
+                        try:
+                            max_nets = int(parts[2])
+                        except ValueError as exc:
+                            raise ValueError(self._t("route_pass_size_range")) from exc
+                    if not 1 <= max_nets <= 100:
+                        raise ValueError(self._t("route_pass_size_range"))
                     token = self._start_work("Routing …")
                     threading.Thread(target=self._routing_run,
-                                     args=(project_path, board.name, contract, net_name, token),
+                                     args=(project_path, board.name, contract, net_name, max_nets, token),
                                      daemon=True).start()
                     return
                 if command in ("/routing prüfen", "/route check"):
@@ -682,8 +694,8 @@ class ChatFrame(wx.Frame):
                                                          "mode": brief.get("pcb_size_mode") or "maximum"}
                                                         if isinstance(target_size, dict) else None)
                     self._append("CAID", describe_routing(contract, route_snapshot, language=self._language) +
-                                 "\n\n" + ("/routing lagen 1|2|4|…|32\n/routing regeln Breite Abstand Randabstand (1 Lage)\n/routing regeln Breite Abstand ViaDurchmesser ViaBohrung Randabstand (2+ Lagen)\n/routing prüfen\n/routing starten (bis zu 20 Netze auf einer Kopie)\n/routing netz NETZNAME (ein Netz)" if self._language == "de" else
-                                              "/route layers 1|2|4|…|32\n/route rules width clearance edge_clearance (1 layer)\n/route rules width clearance via_diameter via_drill edge_clearance (2+ layers)\n/route check\n/route start (up to 20 nets in a copy)\n/route net NET_NAME (one net)"))
+                                 "\n\n" + ("/routing lagen 1|2|4|…|32\n/routing regeln Breite Abstand Randabstand (1 Lage)\n/routing regeln Breite Abstand ViaDurchmesser ViaBohrung Randabstand (2+ Lagen)\n/routing prüfen\n/routing starten [Anzahl] (Standard 20, maximal 100 Netze pro Kopie)\n/routing netz NETZNAME (ein Netz)" if self._language == "de" else
+                                              "/route layers 1|2|4|…|32\n/route rules width clearance edge_clearance (1 layer)\n/route rules width clearance via_diameter via_drill edge_clearance (2+ layers)\n/route check\n/route start [count] (default 20, up to 100 nets per copy)\n/route net NET_NAME (one net)"))
             except (ValueError, OSError, RuntimeError) as exc:
                 self._append("CAID", str(exc))
             return
@@ -1169,14 +1181,15 @@ class ChatFrame(wx.Frame):
         except Exception as exc:
             wx.CallAfter(self._error, str(exc), token)
 
-    def _routing_run(self, project_path, board_name, contract, net_name, token):
+    def _routing_run(self, project_path, board_name, contract, net_name, max_nets, token):
         try:
             def progress(index, total, name):
                 label = (f"Route {index}/{total}: {name}" if self._language != "de" else
                          f"Route {index}/{total}: {name}")
                 wx.CallAfter(self._set_activity, token, label)
             result = route_project(project_path, board_name, contract, net_name,
-                                   language=self._language, token=token, progress=progress)
+                                   max_nets=max_nets, language=self._language,
+                                   token=token, progress=progress)
             wx.CallAfter(self._routing_result, result, token)
         except Exception as exc:
             wx.CallAfter(self._error, str(exc), token)
@@ -1186,16 +1199,26 @@ class ChatFrame(wx.Frame):
             return
         if self._language == "de":
             message = (f"Routing-Kopie: {result['directory']}\n\n"
-                       f"Verbundene Netze: {len(result['accepted'])}; übersprungen: {len(result['skipped'])}. "
+                       f"Verbesserte Netze: {len(result['accepted'])}; übersprungen: {len(result['skipped'])}. "
                        f"Offene Verbindungen: {result['unconnected_before']} → {result['unconnected_after']}.\n\n"
-                       "Öffne die neue Projektkopie in KiCad. CAID-ROUTING.json enthält jedes Ergebnis. "
+                       f"Geeignete Netze vor dem Lauf: {result['eligible_before']}; "
+                       f"nicht versucht: {result['unattempted']}.\n\n"
+                       "Öffne die neue Projektkopie in KiCad; dort kannst du den nächsten Routinglauf starten. "
+                       "CAID-ROUTING.json enthält jedes Ergebnis. "
                        "Der Routinglauf nutzt den zuletzt gespeicherten Stand der Platine.")
         else:
             message = (f"Routed copy: {result['directory']}\n\n"
-                       f"Connected nets: {len(result['accepted'])}; skipped: {len(result['skipped'])}. "
+                       f"Improved nets: {len(result['accepted'])}; skipped: {len(result['skipped'])}. "
                        f"Open connections: {result['unconnected_before']} → {result['unconnected_after']}.\n\n"
-                       "Open the new project copy in KiCad. CAID-ROUTING.json records each result. "
+                       f"Eligible nets before the pass: {result['eligible_before']}; "
+                       f"not attempted: {result['unattempted']}.\n\n"
+                       "Open the new project copy in KiCad to start another routing pass. "
+                       "CAID-ROUTING.json records each result. "
                        "Routing used the last saved board.")
+        if result["skipped"]:
+            heading = "Übersprungene Netze:" if self._language == "de" else "Skipped nets:"
+            message += "\n\n" + heading + "\n" + "\n".join(
+                f"• {item['net']}: {item['reason']}" for item in result["skipped"][:3])
         self._append("CAID", message)
 
     def _check_result(self, result, token):
