@@ -33,6 +33,7 @@ from project_brief import (add_open_question, apply_brief_proposal, brief_hash, 
                            set_routing,
                            history_summary as brief_history_summary,
                            compact_summary as brief_compact_summary)
+from project_recovery import archive_abandoned_stages, describe_stages
 from project_status import overview as project_overview
 from requirement_review import mismatches, review_spec
 from route_project import read_saved_board_snapshot, route_project
@@ -539,6 +540,7 @@ class ChatFrame(wx.Frame):
             (self._t("action_board"), "/platine"),
             (self._t("action_schematic"), "/schaltplan"),
             (self._t("action_project"), "/projekt"),
+            (self._t("action_recovery"), "/wiederherstellung"),
             (self._t("action_project_suggest"), "/projekt vorschlag"),
             (("Routing-Vorprüfung" if self._language == "de" else "Routing preflight"), "/routing prüfen"),
             (("Routing-Kopie erzeugen" if self._language == "de" else "Create routed copy"), "/routing starten"),
@@ -612,6 +614,20 @@ class ChatFrame(wx.Frame):
             self._next_context_probe = 0.0
             self._refresh_context()
             self._append("CAID", self._t("kicad_connecting"))
+            return
+        if command in ("/wiederherstellung", "/recovery",
+                       "/wiederherstellung sichern", "/recovery save"):
+            if not self._project_path:
+                self._append("CAID", self._t("recovery_no_project"))
+                return
+            try:
+                if command.endswith(("sichern", "save")):
+                    moved = archive_abandoned_stages(self._project_path)
+                    self._append("CAID", self._t("recovery_archived", count=len(moved),
+                                                 directory=Path(self._project_path) / "CAID-Recovery"))
+                self._append("CAID", describe_stages(self._project_path, self._language))
+            except (OSError, ValueError) as exc:
+                self._append("CAID", self._t("recovery_failed", error=exc))
             return
         if not self._connection_ok and command in ("/projekt", "/project",
                                                    "/projekt historie", "/project history"):
