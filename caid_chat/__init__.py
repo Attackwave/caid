@@ -1,0 +1,1 @@
+"""CAID KiCad IPC plugin."""

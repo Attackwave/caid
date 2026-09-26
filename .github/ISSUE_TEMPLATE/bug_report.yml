@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a reproducible CAID problem.
+title: "Bug: "
+labels: [bug]
+body:
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Include CAID, KiCad, Windows, and WSL versions where relevant.
+      placeholder: "CAID 0.23.2; KiCad 10.0.6; Windows 11"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Connection and startup
+        - Chat and provider
+        - Schematic
+        - PCB and routing
+        - Packaging and installation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the command or action, the expected result, and the actual result.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Relevant context
+      description: Attach a small project or screenshots if needed. Remove API keys, tokens, and private design files first.
+    validations:
+      required: false

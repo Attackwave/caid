@@ -1,0 +1,352 @@
+"""Saved KiCad schematic access and reviewed edits through an isolated copy."""
+
+from dataclasses import dataclass
+from datetime import datetime
+import difflib
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+from xml.etree import ElementTree
+
+try:
+    from .diagnostics import _cli_path
+    from .footprints import find_footprint
+    from .i18n import localized
+    from .process import run_command
+    from .schematic_fields import rewrite_footprint_fields
+    from .schematic_fields import _root_forms
+except ImportError:  # KiCad starts main.py directly from the plugin directory.
+    from diagnostics import _cli_path
+    from footprints import find_footprint
+    from i18n import localized
+    from process import run_command
+    from schematic_fields import rewrite_footprint_fields
+    from schematic_fields import _root_forms
+
+
+_NOTE_FORM = re.compile(r'^\((?:text|text_box)\s+("(?:\\.|[^"\\])*")', re.DOTALL)
+
+
+def _schematic_notes(source):
+    """Read bounded free-text notes from the saved root sheet, not the netlist."""
+    notes = []
+    count = 0
+    length = 0
+    truncated = False
+    for start, end in _root_forms(source):
+        match = _NOTE_FORM.match(source[start:end])
+        if match is None:
+            continue
+        try:
+            note = json.loads(match.group(1)).strip()
+        except ValueError:
+            continue
+        if not note:
+            continue
+        count += 1
+        excerpt = note[:500]
+        if len(notes) < 40 and length + len(excerpt) <= 8000:
+            notes.append(excerpt)
+            length += len(excerpt)
+            truncated |= len(note) > len(excerpt)
+        else:
+            truncated = True
+    return notes, count, truncated
+
+
+def schematic_path(board_snapshot, language="en"):
+    path = Path(board_snapshot["project_path"]) / (Path(board_snapshot["document"]).stem + ".kicad_sch")
+    if not path.is_file():
+        raise FileNotFoundError(localized(language, f"Saved schematic not found: {path}", f"Gespeicherter Schaltplan nicht gefunden: {path}"))
+    return path
+
+
+def _run_cli_netlist(schematic, output, language="en", token=None):
+    completed = run_command(
+        [_cli_path(language), "sch", "export", "netlist", "--format", "kicadxml",
+         "--output", str(output), str(schematic)],
+        timeout=90, token=token,
+    )
+    if completed.returncode or not output.is_file():
+        raise RuntimeError(localized(language, "KiCad could not read the schematic as a netlist: ", "KiCad konnte den Schaltplan nicht als Netzliste lesen: ") +
+                           (completed.stderr.strip() or completed.stdout.strip())[-500:])
+    return ElementTree.parse(output).getroot()
+
+
+def _netlist_snapshot(root, path):
+    source = path.read_bytes()
+    notes, note_count, notes_truncated = _schematic_notes(source.decode("utf-8-sig"))
+    components = []
+    for comp in root.findall("./components/comp"):
+        components.append({
+            "ref": comp.get("ref", ""),
+            "value": comp.findtext("value", default=""),
+            "footprint": comp.findtext("footprint", default=""),
+        })
+    nets = []
+    for net in root.findall("./nets/net"):
+        nets.append({
+            "name": net.get("name", ""),
+            "nodes": [{"ref": node.get("ref", ""), "pin": node.get("pin", "")}
+                      for node in net.findall("node")],
+        })
+    return {
+        "document": path.name,
+        "saved_file_sha256": hashlib.sha256(source).hexdigest(),
+        "component_count": len(components),
+        "net_count": len(nets),
+        "components": components[:200],
+        "nets": nets[:300],
+        "truncated": len(components) > 200 or len(nets) > 300,
+        "notes": notes,
+        "note_count": note_count,
+        "notes_truncated": notes_truncated,
+        "notes_scope": "saved_root_sheet",
+    }
+
+
+def _validate_circuit_candidate(before, after, language="en"):
+    """Reject a text-only or largely erased circuit before offering Apply."""
+    old_components = before["component_count"]
+    new_components = after["component_count"]
+    if new_components == 0:
+        raise ValueError(localized(
+            language,
+            "The proposal contains no placed symbols. Text notes alone cannot update the PCB; the existing schematic was kept.",
+            "Der Vorschlag enthält keine platzierten Symbole. Textnotizen allein können die Platine nicht aktualisieren; der bisherige Schaltplan blieb erhalten."))
+    if old_components >= 4 and new_components * 2 < old_components:
+        raise ValueError(localized(
+            language,
+            f"The proposal would remove most schematic components ({old_components} → {new_components}); the existing schematic was kept.",
+            f"Der Vorschlag würde die meisten Schaltplanbauteile entfernen ({old_components} → {new_components}); der bisherige Schaltplan blieb erhalten."))
+    if after["net_count"] == 0 and (before["net_count"] > 0 or old_components == 0):
+        raise ValueError(localized(
+            language,
+            "The proposal has no connected nets. It is not a usable new circuit; the existing schematic was kept.",
+            "Der Vorschlag enthält keine verbundenen Netze. Er ist keine nutzbare neue Schaltung; der bisherige Schaltplan blieb erhalten."))
+
+
+def read_schematic(board_snapshot, language="en", token=None):
+    """Read the on-disk schematic; KiCad CLI resolves labels and connectivity."""
+    path = schematic_path(board_snapshot, language)
+    with tempfile.TemporaryDirectory(prefix="caid-netlist-") as temp_dir:
+        root = _run_cli_netlist(path, Path(temp_dir) / "netlist.xml", language, token)
+    return _netlist_snapshot(root, path)
+
+
+def _erc_counts(schematic, output, language="en", token=None):
+    completed = run_command(
+        [_cli_path(language), "sch", "erc", "--format", "json", "--output", str(output), str(schematic)],
+        timeout=90, token=token,
+    )
+    if not output.is_file():
+        raise RuntimeError(localized(language, "KiCad ERC could not check the design: ", "KiCad ERC konnte den Entwurf nicht prüfen: ") +
+                           (completed.stderr.strip() or completed.stdout.strip())[-500:])
+    data = json.loads(output.read_text(encoding="utf-8-sig"))
+    violations = [v for sheet in data.get("sheets", []) for v in sheet.get("violations", [])]
+    return (sum(v.get("severity") == "error" for v in violations),
+            sum(v.get("severity") == "warning" for v in violations))
+
+
+@dataclass
+class StagedSchematic:
+    original: Path
+    candidate: Path
+    stage_dir: Path
+    original_hash: str
+    diff: str
+    agent_answer: str
+    erc_before: tuple[int, int]
+    erc_after: tuple[int, int]
+    candidate_snapshot: dict | None = None
+
+    def cleanup(self):
+        shutil.rmtree(self.stage_dir, ignore_errors=True)
+
+
+def _wsl_path(windows_path, language="en", token=None):
+    completed = run_command(
+        ["wsl.exe", "--exec", "wslpath", "-a", str(windows_path)],
+        timeout=15, token=token,
+    )
+    if completed.returncode:
+        raise RuntimeError(localized(language, "Could not resolve WSL path: ", "WSL-Pfad konnte nicht ermittelt werden: ") + completed.stderr.strip()[-300:])
+    return completed.stdout.strip()
+
+
+def _copy_project_support(source, stage_dir):
+    support = []
+    project = source.with_suffix(".kicad_pro")
+    for name in (project.name, "fp-lib-table", "sym-lib-table"):
+        path = source.parent / name
+        if path.is_file():
+            shutil.copy2(path, stage_dir / name)
+            support.append(stage_dir / name)
+    for library in source.parent.glob("*.kicad_sym"):
+        shutil.copy2(library, stage_dir / library.name)
+        support.append(stage_dir / library.name)
+    for library in source.parent.glob("*.pretty"):
+        shutil.copytree(library, stage_dir / library.name)
+        support.extend((stage_dir / library.name).rglob("*"))
+    return support
+
+
+def stage_schematic_edit(board_snapshot, instruction, model, language="en", token=None):
+    """Let Codex edit only a disposable copy, then validate and return a diff."""
+    if not instruction.strip():
+        raise ValueError(localized(language, "Describe the desired schematic change.", "Beschreibe die gewünschte Schaltplanänderung."))
+    source = schematic_path(board_snapshot, language)
+    stage_dir = Path(tempfile.mkdtemp(prefix="caid-schematic-"))
+    candidate = stage_dir / source.name
+    original = source.read_bytes()
+    original_hash = hashlib.sha256(original).hexdigest()
+    try:
+        candidate.write_bytes(original)
+        support = _copy_project_support(source, stage_dir)
+        support_hashes = {
+            path: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in support if path.is_file()
+        }
+        prompt = (
+            f"Bearbeite ausschließlich die Datei {source.name} in diesem Arbeitsverzeichnis. "
+            "Dies ist eine isolierte Kopie eines KiCad-10-Schaltplans. "
+            "Die Originaldatei darfst du nicht lesen oder ändern. "
+            "Bewahre gültiges KiCad-S-Expression-Format und vorhandene UUIDs. "
+            "Vergib eindeutige Referenzen und UUIDs für neu hinzugefügte Objekte. "
+            "Nutze vorhandene eingebettete Symbole; bei neuen Symbolen müssen die "
+            "Bibliotheksdefinitionen korrekt eingebettet sein. "
+            "Rate keine elektrischen Pinbelegungen; benenne fehlende Daten klar. "
+            "Ersetze vorhandene Symbole oder Netze niemals durch reine Textnotizen. "
+            "Wenn ein belastbarer Entwurf mangels Daten nicht möglich ist, ändere die Datei nicht "
+            "und erkläre die fehlenden Angaben in deiner Antwort. "
+            "Ändere keine Projektdatei. Antworte abschließend auf " +
+            ("Deutsch" if language == "de" else "Englisch") + ". Aufgabe des Nutzers:\n" + instruction
+        )
+        answer_file = stage_dir / "codex-answer.txt"
+        command = [
+            "wsl.exe", "--exec", "bash", "-ic",
+            'exec codex exec --ignore-user-config --sandbox workspace-write --ephemeral '
+            '--skip-git-repo-check --output-last-message "$2" -C "$1" -m "$3" -',
+            "caid", _wsl_path(stage_dir, language, token), _wsl_path(answer_file, language, token), model.strip(),
+        ]
+        try:
+            completed = run_command(command, input=prompt, timeout=360, token=token)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(localized(language, "Codex did not finish the schematic edit within six minutes.", "Codex hat die Schaltplanbearbeitung nach sechs Minuten nicht abgeschlossen.")) from None
+        if completed.returncode:
+            raise RuntimeError(localized(language, "Codex could not edit the working copy: ", "Codex konnte die Arbeitskopie nicht bearbeiten: ") + completed.stderr.strip()[-600:])
+        if not candidate.is_file() or not 0 < candidate.stat().st_size < 4_000_000:
+            raise RuntimeError(localized(language, "The schematic working copy is missing or unusually large.", "Die Schaltplan-Arbeitskopie fehlt oder ist ungewöhnlich groß."))
+        if any(not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest
+               for path, digest in support_hashes.items()):
+            raise RuntimeError(localized(language, "The working copy changed project or library files; change rejected.", "Die Arbeitskopie hat Projekt- oder Bibliotheksdateien verändert; Änderung verworfen."))
+        updated = candidate.read_bytes()
+        if updated == original:
+            detail = answer_file.read_text(encoding="utf-8")[:600] if answer_file.exists() else ""
+            raise ValueError(localized(language, "Codex made no change to the schematic file. ",
+                                       "Codex hat die Schaltplan-Datei nicht geändert. ") + detail)
+        with tempfile.TemporaryDirectory(prefix="caid-sch-check-") as check_dir:
+            before_root = _run_cli_netlist(source, Path(check_dir) / "before.xml", language, token)
+            before_snapshot = _netlist_snapshot(before_root, source)
+            candidate_root = _run_cli_netlist(candidate, Path(check_dir) / "candidate.xml", language, token)
+            candidate_snapshot = _netlist_snapshot(candidate_root, candidate)
+            _validate_circuit_candidate(before_snapshot, candidate_snapshot, language)
+            before = _erc_counts(source, Path(check_dir) / "before.json", language, token)
+            after = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+        old_lines = original.decode("utf-8").splitlines(keepends=True)
+        new_lines = updated.decode("utf-8").splitlines(keepends=True)
+        diff = "".join(difflib.unified_diff(old_lines, new_lines,
+                       fromfile=source.name + localized(language, " (before)", " (vorher)"),
+                       tofile=source.name + localized(language, " (proposal)", " (Entwurf)")))
+        (stage_dir / "change.diff").write_text(diff, encoding="utf-8")
+        return StagedSchematic(
+            source, candidate, stage_dir, original_hash, diff,
+            answer_file.read_text(encoding="utf-8") if answer_file.exists() else "",
+            before, after, candidate_snapshot,
+        )
+    except Exception:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        raise
+
+
+def stage_footprint_updates(board_snapshot, updates, language="en", token=None, standard_root=None):
+    """Stage exact, installed footprint IDs on an isolated schematic copy."""
+    source = schematic_path(board_snapshot, language)
+    desired = {}
+    for entry in updates:
+        ref, identifier = entry["ref"], entry["footprint_id"]
+        if ref in desired:
+            raise ValueError(localized(language, f"Duplicate footprint update for {ref}.",
+                                       f"Doppelte Footprint-Änderung für {ref}."))
+        desired[ref] = identifier
+    installed = {}
+    for ref, identifier in desired.items():
+        found = find_footprint(source.parent, identifier, standard_root)
+        if found is None:
+            raise ValueError(localized(language, f"Footprint {identifier} is not installed for {ref}.",
+                                       f"Footprint {identifier} ist für {ref} nicht installiert."))
+        installed[ref] = found
+    original = source.read_bytes()
+    updated_text, previous = rewrite_footprint_fields(original.decode("utf-8-sig"), desired)
+    stage_dir = Path(tempfile.mkdtemp(prefix="caid-footprints-"))
+    candidate = stage_dir / source.name
+    try:
+        candidate.write_text(updated_text, encoding="utf-8")
+        _copy_project_support(source, stage_dir)
+        with tempfile.TemporaryDirectory(prefix="caid-fp-check-") as check_dir:
+            candidate_root = _run_cli_netlist(candidate, Path(check_dir) / "candidate.xml", language, token)
+            candidate_snapshot = _netlist_snapshot(candidate_root, candidate)
+            before = _erc_counts(source, Path(check_dir) / "before.json", language, token)
+            after = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+        by_ref = {item["ref"]: item for item in candidate_snapshot["components"]}
+        if any(by_ref.get(ref, {}).get("footprint") != identifier for ref, identifier in desired.items()):
+            raise RuntimeError(localized(language, "KiCad netlist does not contain the requested footprint assignments.",
+                                         "KiCads Netzliste enthält nicht die gewünschten Footprint-Zuordnungen."))
+        diff = "".join(difflib.unified_diff(
+            original.decode("utf-8-sig").splitlines(keepends=True), updated_text.splitlines(keepends=True),
+            fromfile=source.name + localized(language, " (before)", " (vorher)"),
+            tofile=source.name + localized(language, " (proposal)", " (Entwurf)")))
+        (stage_dir / "change.diff").write_text(diff, encoding="utf-8")
+        pad_label = localized(language, "pads", "Pads")
+        details = ", ".join(f"{ref}: {previous[ref] or '∅'} → {identifier} "
+                            f"({installed[ref]['pad_count']} {pad_label})" for ref, identifier in desired.items())
+        note = localized(language, "Installed library files found; physical package fit is not verified.",
+                         "Installierte Bibliotheksdateien gefunden; die Passung zum physischen Gehäuse ist nicht geprüft.")
+        return StagedSchematic(source, candidate, stage_dir, hashlib.sha256(original).hexdigest(),
+                               diff, details + "\n" + note, before, after, candidate_snapshot)
+    except Exception:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        raise
+
+
+def apply_schematic_edit(staged, language="en"):
+    """Back up and atomically replace a closed, unchanged schematic file."""
+    source = staged.original
+    if not staged.candidate.is_file():
+        raise FileNotFoundError(localized(language, "The working copy no longer exists.", "Die Arbeitskopie ist nicht mehr vorhanden."))
+    lock = source.with_name("~" + source.name + ".lck")
+    if lock.exists():
+        raise RuntimeError(localized(language, "The schematic is open in KiCad. Close the schematic editor and retry.", "Der Schaltplan ist in KiCad geöffnet. Schließe den Schaltplan-Editor und versuche es erneut."))
+    if hashlib.sha256(source.read_bytes()).hexdigest() != staged.original_hash:
+        raise RuntimeError(localized(language, "The schematic changed since the preview. Create a new proposal.", "Der Schaltplan hat sich seit der Vorschau geändert. Bitte den Entwurf neu erzeugen."))
+    backup = source.with_name(source.stem + ".caid-backup-" +
+                              datetime.now().strftime("%Y%m%d-%H%M%S") +
+                              source.suffix)
+    shutil.copy2(source, backup)
+    with tempfile.NamedTemporaryFile(dir=source.parent, prefix=".caid-", suffix=source.suffix, delete=False) as stream:
+        temp_path = Path(stream.name)
+        stream.write(staged.candidate.read_bytes())
+        stream.flush()
+        os.fsync(stream.fileno())
+    try:
+        os.replace(temp_path, source)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    staged.cleanup()
+    return backup

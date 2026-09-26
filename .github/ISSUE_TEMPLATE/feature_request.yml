@@ -1,0 +1,26 @@
+name: Feature request
+description: Describe a workflow CAID should support.
+title: "Feature: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Current workflow
+      description: What are you trying to do in KiCad, and where does the current workflow stop?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the result you want to review or apply.
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Include KiCad version, board rules, or file format requirements if they matter.
+    validations:
+      required: false

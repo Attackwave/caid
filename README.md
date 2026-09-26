@@ -1,0 +1,37 @@
+# CAID Chat for KiCad 10
+
+CAID is a PCB editor IPC plugin with an AI chat, live PCB context, saved schematic netlists, ERC/DRC checks, and reviewed PCB placement or schematic changes.
+
+The interface follows **KiCad's language setting**. English and German are supported; other languages fall back to English. KiCad's “Default” setting uses the Windows user language. Reopen the chat after changing language, and restart KiCad to update the launcher menu. Model answers follow the selected language.
+
+## Windows installation
+
+1. Install `caid-chat-kicad10-pcm-0.23.2.zip` through **Plugin and Content Manager → Install from File**.
+2. Extract `caid-chat-kicad10-launcher-0.23.2.zip` to `Documents\KiCad\10.0\scripting\plugins`, replacing the existing `caid_launcher\__init__.py`.
+3. Restart KiCad. In the PCB editor, open **Tools → External Plugins → Open CAID Chat**.
+
+Select **Codex (WSL sign-in)** if Codex CLI is installed and signed in within WSL. Alternatively select **OpenAI API**, **Anthropic Claude**, or **Google Gemini** and enter its model ID and API key. For local inference, start Ollama or the LM Studio server, select it in **Connection**, then click **Test model**. CAID lists installed local models, chooses the first one when the model field is empty, and checks a structured reply. The button also checks the selected cloud model. The default local address is `127.0.0.1`; WSL is not needed for these HTTP providers. The window labels an address outside the local machine as an external server. Provider, model, and server address are saved without credentials in `%APPDATA%\CAID\provider.json`; API keys remain only in the open window and are kept separate by provider.
+
+The window keeps the current board and conversation visible. Open **Connection** for the provider and model; **Actions** contains the less frequent commands. Enter sends, and Shift+Enter starts a new line.
+
+Use `/status`, `/board`, `/schematic`, `/sync`, `/f8`, `/erc`, `/drc`, `/new`, and `/help`. During a normal AI request, CAID can perform up to three rounds of targeted, read-only project inspections: components and pins, nets, footprints, current PCB selection, component search, and ERC/DRC of saved files. The window shows the current inspection and lists completed checks. For footprint questions, CAID searches the project and installed KiCad libraries and compares schematic and PCB footprint IDs; a library file alone does not verify a physical package. Placement previews can select affected footprints in KiCad using **Mark on board**. `/sync` previews net changes for existing PCB pads and applies them in one undo step after review. Missing pads or footprints and existing copper block direct net application. `/f8` or the button in the sync preview opens KiCad's full **Update PCB from Schematic** dialog. Review and confirm changes there; CAID then compares actual footprint and pad net changes and reports any remaining differences. To edit a schematic, use `/sch your task`; CAID creates an isolated working copy, shows a diff and ERC counts, and applies the change only after your review. The saved schematic must be closed in KiCad before applying. German aliases `/platine`, `/schaltplan`, `/abgleich`, `/neu`, and `/hilfe` also work.
+
+KiCad 10's IPC plugin runs in its own process; its documented API has no facility to dock an external window as a native sidebar. CAID remembers its position and size in `%APPDATA%\CAID\window.json`; the file contains no chat content or credentials.
+
+Schematic proposals include a combined review of ERC and the resulting PCB pad-net and footprint-ID differences. An explicit change to an installed project or standard footprint can be staged through any configured model provider. Applying a staged schematic creates a backup, then offers KiCad's native F8 update for PCB changes. Package fit to the exact physical part remains a separate check.
+
+While a task runs, the window shows activity and a **Cancel** button. Cancel stops a running Codex/WSL subprocess. For HTTP providers, late responses are discarded.
+
+The schematic snapshot reflects the last saved file. Placement geometry checks do not replace KiCad DRC or ERC. Direct schematic editing currently requires the Codex WSL provider.
+
+## New design drafts (0.22.0)
+
+Use `/design task` (or `/entwurf Aufgabe`) to request a separate new KiCad project from any configured model. CAID asks for maximum PCB dimensions first (or accepts `open` for a provisional outline). For ROM adapters it then asks about image organization, physical socket geometry, clearance on both sides and the programming connector, one question at a time. An `open` answer remains an unresolved project item rather than a confirmed hardware fact. Answers stay attached to the same draft across restarts. An explicit 40-pin or CDTV draft started from a 42-pin project does not inherit the 42-pin requirements or pin reference. `/design continue` resumes it; `/design cancel` ends it. The project-local `CAID-Projekt.json` records requirements with status and source, decisions, open questions and change history. `/project` shows it and `/project history` shows recent changes. `/project set Topic: Value` records user input, `/project assumption Topic: Value` an assumption, and `/project verified Topic: Value | Source` a cited claim that still needs technical review. `/project suggest` proposes updates from the conversation for approval. `/project size max 80 x 25 mm` sets a maximum; `/project size exact 80 x 25 mm` sets an exact outline. `/project side U1 TOP` sets a checked component side. CAID blocks drafts that contradict these checks and marks other requirements as unchecked in its review. It validates symbol pins and footprint pads, exports the schematic netlist, and checks every proposed connection. After saving, it reopens the PCB to verify outline, footprint sides, positions and KiCad footprint bounds; a footprint extending past the outline blocks the draft. The new project is placed under `CAID-Entwuerfe/<Name>` beside the current project and receives its own brief. Its PCB contains placed footprints on the requested sides and pad nets, plus a board outline if dimensions were supplied. Traces are not routed. You may also use `/design C:\path\design.json` with a structured design model.
+
+## Routing (0.22.0)
+
+Use `/route layers 1|2|4|…|32` and `/route rules width clearance edge_clearance` for one routing layer or `/route rules width clearance via_diameter via_drill edge_clearance` for multiple layers (all dimensions in mm). `/route check` compares these requirements with the open KiCad board, checks whether each footprint could fit the stated board size after a 90° rotation, and runs saved-board DRC. `/route start` routes up to 20 eligible nets (2 to 32 pads, no existing copper) in a separate project copy; `/route net NET_NAME` selects one. Each proposed net is kept only if KiCad DRC adds no findings and the open-connection count decreases. The copy records results in `CAID-ROUTING.json`. Existing partial routes, complex outlines and zones are not fully supported. These values are not yet synchronized to KiCad design rules. Freerouting is not used.
+
+## Development
+
+Run `python3 -m unittest discover -s tests -q` for unit tests and `python3 scripts/build_pcm.py` to create both installable ZIPs under `build/`. The `build/` and `tmp/` directories are ignored by Git. Local KiCad test projects belong under `tmp/hardware/`; generated reports and exports belong under `build/`.

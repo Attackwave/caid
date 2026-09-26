@@ -1,0 +1,24 @@
+{
+  "$schema": "https://go.kicad.org/pcm/schemas/v2",
+  "name": "CAID Chat",
+  "description": "AI chat for the KiCad PCB editor",
+  "description_full": "AI assistant for KiCad 10 with validated schematic and unrouted PCB drafts, reviewed changes, routing on checked project copies, mechanical fit preflight, ERC/DRC, and model access via WSL CLIs, cloud APIs or local servers. English and German follow KiCad's language setting.",
+  "identifier": "caid-chat",
+  "type": "plugin",
+  "author": {
+    "name": "CAID Project",
+    "contact": {}
+  },
+  "license": "Apache-2.0",
+  "resources": {},
+  "versions": [
+    {
+      "version": "0.23.2",
+      "status": "development",
+      "runtime": "ipc",
+      "kicad_version": "10.0",
+      "kicad_version_max": "10.99",
+      "platforms": ["windows"]
+    }
+  ]
+}

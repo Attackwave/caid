@@ -1,0 +1,29 @@
+# Generated packages and scratch work
+/build/
+/tmp/
+/hardware/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.coverage
+htmlcov/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# KiCad editor state and generated diagnostics
+*.kicad_*
+*lib-table
+*.kicad_sch-bak
+*.kicad_pcb-bak
+*-backups/
+*.lck
+~*.lck

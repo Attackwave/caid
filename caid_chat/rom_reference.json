@@ -1,0 +1,43 @@
+{
+  "target": "Amiga 500+ Rev. 8, 42-pin Kickstart socket",
+  "status": "User-supplied pin list; compare against the exact motherboard revision and physical socket before manufacturing",
+  "user_pinout_42": {
+    "1": "A18", "2": "A17", "3": "A7", "4": "A6", "5": "A5", "6": "A4", "7": "A3", "8": "A2", "9": "A1", "10": "A0",
+    "11": "/CE", "12": "GND", "13": "/OE", "14": "D0", "15": "D8", "16": "D1", "17": "D9", "18": "D2", "19": "D10", "20": "D3", "21": "D11", "22": "VCC", "23": "D4", "24": "D12", "25": "D5", "26": "D13", "27": "D6", "28": "D14", "29": "D7", "30": "D15/A-1", "31": "GND", "32": "/BYTE", "33": "A16", "34": "A15", "35": "A14", "36": "A13", "37": "A12", "38": "A11", "39": "A10", "40": "A9", "41": "A8", "42": "A19"
+  },
+  "cross_check": "Rämixx500 (open hardware recreation of A500+ rev. 8A.1) AMIGA_ROM library agrees for numbered pins, but labels pin 30 D15; user labels it D15/A-1. Confirm actual socket wiring and /BYTE mode.",
+  "cross_check_url": "https://github.com/SukkoPera/Raemixx500/blob/master/libs/AMIGA_ROM.lib",
+  "prototype_architecture": {
+    "status": "provisional electrical architecture, not manufacturing-ready",
+    "flash": {
+      "orderable_part": "SST39VF1601C-70-4I-EKE",
+      "manufacturer": "Microchip",
+      "capacity_bytes": 2097152,
+      "organization": "1048576 x 16 bits",
+      "voltage_v": "2.7-3.6",
+      "package": "48-lead TSOP, 12 x 20 mm",
+      "datasheet": "https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/SST39VF1601C-SST39VF1602C-16-Mbit-x16-Multi-Purpose-Flash-Plus-DS20005018B.pdf",
+      "pinout_48": {
+        "1":"A15","2":"A14","3":"A13","4":"A12","5":"A11","6":"A10","7":"A9","8":"A8","9":"A19","10":"NC","11":"WE#","12":"RST#","13":"NC","14":"WP#","15":"RY/BY#","16":"A18","17":"A17","18":"A7","19":"A6","20":"A5","21":"A4","22":"A3","23":"A2","24":"A1","25":"A0","26":"CE#","27":"VSS","28":"OE#","29":"DQ0","30":"DQ8","31":"DQ1","32":"DQ9","33":"DQ2","34":"DQ10","35":"DQ3","36":"DQ11","37":"VDD","38":"DQ4","39":"DQ12","40":"DQ5","41":"DQ13","42":"DQ6","43":"DQ14","44":"DQ7","45":"DQ15","46":"VSS","47":"NC","48":"A16"
+      }
+    },
+    "banking": "For verified 512 KiB x16 ROM images, flash A0-A17 address one image; switch selects flash A18; flash A19 is low in read mode. This yields two 512 KiB banks in the lower 1 MiB, leaving the upper 1 MiB unused. Do not assume the ROM images are 512 KiB until their actual files are checked.",
+    "read_bus": "Five SN74LVC8T245 dual-supply transceivers: three for host-to-flash address and CE#/OE#, two for flash-to-host D0-D15. Flash side VCCA=3.3 V, host side VCCB=host 5 V. Direction and output enables require a reviewed truth table. No host-side buffer may drive while the programmer is active.",
+    "programming": "Detachable 50-way 0.5 mm FFC to a separate USB programmer based provisionally on RP2354B. Program with the Amiga powered off, whether the ROM adapter is installed or removed. External power must feed the adapter's 3.3 V rail without backfeeding the Amiga 5 V rail. An interlock must disable host transceivers and select full A0-A19 plus CE#/OE#/WE#/RST# and D0-D15 from the programmer. Verify by read-back.",
+    "write_protection": "WE# held inactive high in read mode; WP# alone does not protect the entire chip. Only the external programmer may assert WE# after host bus isolation is active.",
+    "power": "3.3 V regulator candidate TLV75533PDBVR, supplied from an isolated choice of Amiga 5 V or programmer 5 V; power path, regulator thermal limits and decoupling remain to be designed.",
+    "parts_sources": {
+      "translator": "https://www.ti.com/product/SN74LVC8T245",
+      "regulator": "https://www.ti.com/product/TLV755P",
+      "programmer_mcu": "https://www.raspberrypi.com/products/rp2350/"
+    }
+  },
+  "unresolved": [
+    "Verify exact A500+ Rev. 8 socket wiring and /BYTE state on the user's physical motherboard",
+    "Check actual sizes and word order of the user's two legal ROM image files",
+    "Complete transceiver direction/OE truth table and programming interlock including unpowered cases",
+    "Choose and validate exact FFC mating parts, pinout, 3.3 V data path and programmer firmware",
+    "Calculate full host read timing and regulator power budget; verify with hardware",
+    "Measure original module dimensions, socket pin geometry and clearance on both sides"
+  ]
+}
