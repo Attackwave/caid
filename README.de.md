@@ -31,14 +31,11 @@ Jedes Projekt hält Anforderungen, Antworten, Quellen, Annahmen, offene Punkte u
 
 ## Installation unter Windows
 
-Voraussetzung ist KiCad 10 unter Windows mit aktivierter Option **KiCad-API aktivieren** in den Plugin-Einstellungen. Lade beide ZIPs aus dem [Release v0.23.2](https://github.com/Attackwave/caid/releases/tag/v0.23.2) herunter:
+Voraussetzung ist KiCad 10 unter Windows mit aktivierter Option **KiCad-API aktivieren** in den Plugin-Einstellungen. Öffne die **Plugin- und Content-Verwaltung → Repositories verwalten** und füge `https://attackwave.github.io/caid/pcm/repository.json` hinzu. Wähle dort **CAID Chat** und klicke **Installieren**. Starte KiCad neu, öffne eine gespeicherte Platine im PCB-Editor und wähle **Werkzeuge → Externe Plugins → CAID Chat öffnen**. `/status` zeigt die Verbindung.
 
-1. Installiere `caid-chat-kicad10-pcm-0.23.2.zip` über KiCads **Plugin- und Content-Verwaltung → Aus Datei installieren**. Prüfe danach im Reiter **Installiert**, dass CAID Chat als Version 0.23.2 erscheint. Eine zuvor manuell kopierte Version unter `Dokumente\KiCad\10.0\plugins\caid_chat` sollte außerhalb des Plugin-Suchpfads gesichert werden, damit sie nicht doppelt geladen wird. Die Paketverwaltung zeigt manuell kopierte Plugins nicht im Reiter **Installiert** an.
-2. Entpacke `caid-chat-kicad10-launcher-0.23.2.zip` nach `Dokumente\KiCad\10.0\scripting\plugins` und ersetze die vorhandene `caid_launcher\__init__.py`. Danach muss `...\scripting\plugins\caid_launcher\__init__.py` existieren.
-3. Schließe alle KiCad-Fenster und starte KiCad neu. Öffne eine gespeicherte Platine im PCB-Editor. Unter **Werkzeuge → Externe Plugins → CAID Chat öffnen** startet der Menü-Starter das IPC-Chatfenster.
-4. Gib in CAID `/status` ein. Dort sollten KiCad-Version und geöffnete Platine stehen. Bei einem API-Timeout sichere deine Arbeit, beende alle KiCad-Prozesse, öffne eine Platine erneut und gib `/verbinden` ein.
+Alternativ kannst du das einzige Paket `caid-chat-kicad10-pcm-0.23.3.zip` aus [Release v0.23.3](https://github.com/Attackwave/caid/releases/tag/v0.23.3) über **Aus Datei installieren** einspielen. Der Menü-Starter ist enthalten. Aus einem Quellcode-Checkout erzeugt `python3 scripts/build_pcm.py` dieses ZIP unter `build/`. KiCad installiert die Laufzeit-Abhängigkeiten des PCM-Pakets.
 
-Aus einem Quellcode-Checkout erzeugt `python3 scripts/build_pcm.py` beide ZIPs unter `build/`. Anschließend gelten dieselben Installationsschritte. Das Build-Skript benötigt nur die Python-Standardbibliothek; KiCad installiert die Laufzeit-Abhängigkeiten des PCM-Pakets.
+Wenn du eine ältere Version mit separatem Launcher-ZIP installiert hast, entferne einmalig den alten Ordner `caid_launcher` unter `Dokumente\KiCad\10.0\scripting\plugins`, damit der Menüeintrag nicht doppelt erscheint. Bei neuen Installationen ist kein Kopieren von Dateien nötig.
 
 Der Menü-Starter nutzt KiCads älteres Action-Plugin-System nur zum Öffnen des Fensters und übergibt den Pfad der gerade geöffneten Platine. Die Verbindung des Chatfensters zur Platine verwendet weiterhin die IPC-API. Bei einem API-Ausfall bleiben dadurch der gespeicherte Projekt-Steckbrief, `/projekt` und `/status` lesbar; Änderungen an PCB und Schaltplan brauchen weiter eine funktionierende API. Dieser Aufbau wurde mit KiCad 10.0.6 unter Windows und `FlashROM42.kicad_pcb` gestartet.
 
@@ -47,7 +44,7 @@ Alternativ ist die manuelle Installation möglich:
 1. Kopiere den Ordner `caid_chat` nach `%USERPROFILE%\Documents\KiCad\10.0\plugins\caid_chat`. In diesem Zielordner muss direkt die Datei `plugin.json` liegen. **Nicht** den ähnlich benannten Ordner `10.0\scripting\plugins` verwenden; der ist für ältere `pcbnew`-Plugins.
 2. Starte KiCad neu und öffne eine Platine im PCB-Editor.
 3. KiCad erstellt beim ersten Laden automatisch eine Python-Umgebung und installiert die Einträge aus `requirements.txt`. Das kann einen Moment dauern.
-4. Für den erprobten Menü-Start wird auch bei manueller IPC-Installation der `caid_launcher` aus Schritt 2 benötigt.
+4. Bei einer manuellen Quellcode-Installation liegt der Menü-Starter weiterhin separat unter `caid_launcher`. Die PCM-Installation enthält ihn bereits.
 
 Dein `C:\Program Files\KiCad\10.0\bin\pythonw.exe` ist der mit KiCad gelieferte Interpreter. Bei einem IPC-Plugin startet KiCad ihn selbst; du musst `main.py` nicht mit `pythonw.exe` aufrufen. Die bereits aktivierte KiCad-API ist dafür erforderlich.
 
