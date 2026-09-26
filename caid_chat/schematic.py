@@ -388,18 +388,26 @@ def apply_schematic_edit(staged, language="en"):
     lock = source.with_name("~" + source.name + ".lck")
     if lock.exists():
         raise RuntimeError(localized(language, "The schematic is open in KiCad. Close the schematic editor and retry.", "Der Schaltplan ist in KiCad geöffnet. Schließe den Schaltplan-Editor und versuche es erneut."))
-    if hashlib.sha256(source.read_bytes()).hexdigest() != staged.original_hash:
+    original = source.read_bytes()
+    if hashlib.sha256(original).hexdigest() != staged.original_hash:
         raise RuntimeError(localized(language, "The schematic changed since the preview. Create a new proposal.", "Der Schaltplan hat sich seit der Vorschau geändert. Bitte den Entwurf neu erzeugen."))
     backup = source.with_name(source.stem + ".caid-backup-" +
-                              datetime.now().strftime("%Y%m%d-%H%M%S") +
+                              datetime.now().strftime("%Y%m%d-%H%M%S-%f") +
                               source.suffix)
-    shutil.copy2(source, backup)
+    with backup.open("xb") as stream:
+        stream.write(original)
+        stream.flush()
+        os.fsync(stream.fileno())
     with tempfile.NamedTemporaryFile(dir=source.parent, prefix=".caid-", suffix=source.suffix, delete=False) as stream:
         temp_path = Path(stream.name)
         stream.write(staged.candidate.read_bytes())
         stream.flush()
         os.fsync(stream.fileno())
     try:
+        if lock.exists() or source.read_bytes() != original:
+            raise RuntimeError(localized(language,
+                                         "The schematic changed or opened while applying. Create a new proposal.",
+                                         "Der Schaltplan wurde während der Übernahme geöffnet oder geändert. Bitte neu vorschlagen lassen."))
         os.replace(temp_path, source)
     except Exception:
         temp_path.unlink(missing_ok=True)

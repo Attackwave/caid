@@ -1,6 +1,6 @@
 # CAID roadmap
 
-This roadmap starts from v0.23.7. It describes the currently known work needed to turn CAID from a useful KiCad 10 prototype into a dependable, general-purpose circuit and PCB design assistant. The Amiga ROM adapter is one demanding test project, not a product-specific mode or the basis for general electrical assumptions.
+This roadmap starts from v0.23.8. It describes the currently known work needed to turn CAID from a useful KiCad 10 prototype into a dependable, general-purpose circuit and PCB design assistant. The Amiga ROM adapter is one demanding test project, not a product-specific mode or the basis for general electrical assumptions.
 
 ## Planning basis
 
@@ -10,6 +10,9 @@ This roadmap starts from v0.23.7. It describes the currently known work needed t
 - CAID targets KiCad 10 on Windows now. KiCad 10's IPC plugins run in the PCB Editor. **All planned schematic creation and editing in M2–M3 uses saved `.kicad_sch` files**: stage an isolated project copy, edit the file, validate it with `kicad-cli`, preview the diff and PCB impact, then apply the reviewed revision. There is no KiCad 11 dependency for these features. KiCad 11 editor integration is a later optional compatibility project. [KiCad IPC add-on documentation](https://dev-docs.kicad.org/en/apis-and-binding/ipc-api/for-addon-developers/)
 
 ## Current baseline
+
+M1 is in progress. v0.23.8 adds a bounded subprocess for the KiCad context probe, process-tree cancellation, another source check before publishing a design or route copy, unique schematic backups, and a repeatable Windows KiCad integration script. Editor restart and upgrade scenarios still need broader in-editor coverage.
+
 
 CAID already installs through a KiCad PCM repository; connects to the open PCB; reads saved schematic netlists; runs ERC and DRC; tracks a project brief; stages new single-sheet circuits and unrouted boards; previews selected schematic fields and PCB placement; and routes bounded batches on isolated PCB copies. It supports WSL CLIs, cloud APIs, and local model servers. Routing uses local path search followed by KiCad DRC; part evidence is recorded but not independently authenticated. A successful check is evidence for the stated check only.
 

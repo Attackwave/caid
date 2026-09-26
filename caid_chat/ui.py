@@ -13,6 +13,7 @@ from kipy.proto.common import ApiStatusCode
 from board_ops import apply_placements, describe_placements, geometry_warnings, mark_footprints, repair_placements, snapshot, validate_placements
 from brief_ai import BriefProposal, ask_brief_proposal
 from context import EditorContext, capability_summary
+from context_probe import probe_context
 from circuit_design import stage_new_design
 from design_ai import ask_design
 from design_session import DesignSession, board_size_mode, parse_board_size
@@ -341,22 +342,9 @@ class ChatFrame(wx.Frame):
 
     def _probe_context(self):
         try:
-            # The recurring probe needs its own request socket. Sharing kipy's
-            # request/reply client with an AI worker can interleave responses.
-            client = self._kicad
-            if type(client).__module__.startswith("kipy."):
-                from kipy import KiCad
-                client = KiCad()
-            board = client.get_board()
-            document = str(board.name) if board and board.name else None
-            project_path = str(board.document.project.path) if board else None
-            try:
-                version = client.get_version()
-                version_name, major = str(version.full_version), int(version.major)
-            except Exception:
-                version_name, major = "unknown", None
-            context = EditorContext(version_name, major, "pcb", document)
-            wx.CallAfter(self._context_result, context, project_path, "")
+            result = probe_context()
+            context = EditorContext(result["version"], result["major"], "pcb", result["document"])
+            wx.CallAfter(self._context_result, context, result["project_path"], "")
         except Exception as exc:
             wx.CallAfter(self._context_result, None, None, str(exc))
 
@@ -376,9 +364,12 @@ class ChatFrame(wx.Frame):
                 self.brief_pane.SetLabel(self._t("brief_unavailable", error=error[:100]))
             self.context_label.Wrap(max(300, self.GetClientSize().width - 32))
             return
+        if not self._connection_ok:
+            from kipy import KiCad
+            self._kicad = KiCad()
         self._connection_ok = True
         self._connection_error = ""
-        self._next_context_probe = 0.0
+        self._next_context_probe = time.monotonic() + 8
         project_changed = self._project_path is not None and self._project_path != project_path
         if updated != self._context or project_changed:
             old_document = self._context.document
@@ -581,7 +572,9 @@ class ChatFrame(wx.Frame):
         self._append(self._t("you"), message)
         command = message.casefold()
         if command in ("/status", "status"):
-            status = capability_summary(self._context, self._language)
+            live_context = self._context if self._connection_ok else EditorContext(
+                "unknown", None, "pcb", None)
+            status = capability_summary(live_context, self._language)
             if self._project_path:
                 try:
                     status += "\n\n" + project_overview(
