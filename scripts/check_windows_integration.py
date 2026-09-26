@@ -23,7 +23,8 @@ from caid_chat.circuit_design import stage_new_design
 from caid_chat.project_recovery import scan_stages
 from caid_chat.routing import default_contract, set_layers, set_limits
 from caid_chat.schematic import (apply_schematic_edit, stage_field_updates,
-                                 stage_net_renames, stage_pin_connections)
+                                 stage_net_renames, stage_no_connect_markers,
+                                 stage_pin_connections)
 
 
 KICAD_ROOT = Path(sys.executable).resolve().parent.parent
@@ -112,6 +113,27 @@ def check_new_design(parent):
         assert "already connected" in str(error)
     else:
         raise AssertionError("Already connected pin was accepted")
+    original = hashlib.sha256(schematic.read_bytes()).hexdigest()
+    staged = stage_no_connect_markers(
+        {"project_path": str(output), "document": "RecoverySmoke.kicad_pcb"},
+        [{"ref": "R3", "pin": "2"}])
+    try:
+        assert staged.erc_after[0] <= staged.erc_before[0]
+        assert hashlib.sha256(schematic.read_bytes()).hexdigest() == original
+        backup = apply_schematic_edit(staged)
+        assert hashlib.sha256(backup.read_bytes()).hexdigest() == original
+        assert '(no_connect ' in schematic.read_text(encoding="utf-8")
+    finally:
+        staged.cleanup()
+    try:
+        stage_no_connect_markers(
+            {"project_path": str(output), "document": "RecoverySmoke.kicad_pcb"},
+            [{"ref": "R3", "pin": "1"}])
+    except ValueError as error:
+        assert "already connected" in str(error)
+    else:
+        raise AssertionError("Connected pin was accepted as no-connect")
+    print("No-connect: saved KiCad netlist and ERC verified; Apply kept a backup")
 
 
 def _point(x, y):

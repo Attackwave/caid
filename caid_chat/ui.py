@@ -42,7 +42,8 @@ from routing import default_contract, describe as describe_routing, set_layers, 
 from providers import CLI_PROVIDERS, DEFAULT_MODELS, DEFAULT_URLS, LOCAL_PROVIDERS, PROVIDERS, ask_provider, is_loopback_url, list_local_models, probe_model
 from project_tools import execute_read_tool, tool_label
 from schematic import (read_schematic, stage_field_updates, stage_footprint_updates,
-                       stage_net_renames, stage_pin_connections, stage_schematic_edit)
+                       stage_net_renames, stage_no_connect_markers,
+                       stage_pin_connections, stage_schematic_edit)
 
 
 class ChatFrame(wx.Frame):
@@ -963,10 +964,19 @@ class ChatFrame(wx.Frame):
                         inspected.append(label)
             token.check()
             if (result["footprint_updates"] or result["field_updates"] or result["net_renames"] or
-                    result["pin_connections"] or
+                    result["pin_connections"] or result["no_connect_markers"] or
                     result["edit_schematic"]) and "components" not in schematic_snapshot:
                 raise RuntimeError(self._t("schematic_required", error=schematic_snapshot.get("unavailable", "")))
-            if result["pin_connections"]:
+            if result["no_connect_markers"]:
+                wx.CallAfter(self._set_activity, token, self._t("checking_copy"))
+                staged = stage_no_connect_markers(board_snapshot, result["no_connect_markers"], self._language, token)
+                try:
+                    plan = prepare_design_plan(self._kicad.get_board(), staged, schematic_snapshot, self._language)
+                except Exception:
+                    staged.cleanup()
+                    raise
+                wx.CallAfter(self._schematic_result, plan, messages, result["answer"], token, inspected)
+            elif result["pin_connections"]:
                 wx.CallAfter(self._set_activity, token, self._t("checking_copy"))
                 staged = stage_pin_connections(board_snapshot, result["pin_connections"], self._language, token)
                 try:

@@ -93,7 +93,8 @@ def probe_model(provider, base_url, model, api_key="", token=None):
                           {"document": "CAID connection test", "footprints": []},
                           token=token, tools_remaining=0)
     if (result["tool_requests"] or result["placements"] or result["footprint_updates"] or
-            result["field_updates"] or result["net_renames"] or result["pin_connections"] or result["edit_schematic"]):
+            result["field_updates"] or result["net_renames"] or result["pin_connections"] or
+            result["no_connect_markers"] or result["edit_schematic"]):
         raise RuntimeError("Model produced changes during the connection test")
     return True
 
