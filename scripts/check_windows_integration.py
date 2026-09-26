@@ -22,7 +22,8 @@ from caid_chat.route_project import route_project
 from caid_chat.circuit_design import stage_new_design
 from caid_chat.project_recovery import scan_stages
 from caid_chat.routing import default_contract, set_layers, set_limits
-from caid_chat.schematic import apply_schematic_edit, stage_field_updates, stage_net_renames
+from caid_chat.schematic import (apply_schematic_edit, stage_field_updates,
+                                 stage_net_renames, stage_pin_connections)
 
 
 KICAD_ROOT = Path(sys.executable).resolve().parent.parent
@@ -59,7 +60,7 @@ def check_new_design(parent):
                 {"ref": ref, "symbol": "Device:R", "value": "10k",
                  "footprint": "Resistor_SMD:R_0805_2012Metric",
                  "pcb_x_mm": x, "pcb_y_mm": 35}
-                for ref, x in (("R1", 35), ("R2", 70))],
+                for ref, x in (("R1", 35), ("R2", 70), ("R3", 50))],
             "nets": [{"name": "LINK", "nodes": [{"ref": "R1", "pin": "2"},
                                                  {"ref": "R2", "pin": "1"}]}]}
     result = stage_new_design(spec, project)
@@ -86,6 +87,31 @@ def check_new_design(parent):
     finally:
         staged.cleanup()
     print("Net rename: KiCad netlist and ERC verified; reviewed Apply kept a backup")
+
+    original = hashlib.sha256(schematic.read_bytes()).hexdigest()
+    staged = stage_pin_connections(
+        {"project_path": str(output), "document": "RecoverySmoke.kicad_pcb"},
+        [{"ref": "R3", "pin": "1", "net": "CLOCK"}])
+    try:
+        before = {item["name"]: item["nodes"] for item in staged.before_snapshot["nets"]}
+        after = {item["name"]: item["nodes"] for item in staged.candidate_snapshot["nets"]}
+        assert {"ref": "R3", "pin": "1"} not in before["/CLOCK"]
+        assert {"ref": "R3", "pin": "1"} in after["/CLOCK"]
+        assert staged.erc_after[0] <= staged.erc_before[0]
+        assert hashlib.sha256(schematic.read_bytes()).hexdigest() == original
+        backup = apply_schematic_edit(staged)
+        assert hashlib.sha256(backup.read_bytes()).hexdigest() == original
+    finally:
+        staged.cleanup()
+    print("Pin connection: exact KiCad netlist change and ERC verified; Apply kept a backup")
+    try:
+        stage_pin_connections(
+            {"project_path": str(output), "document": "RecoverySmoke.kicad_pcb"},
+            [{"ref": "R3", "pin": "1", "net": "CLOCK"}])
+    except ValueError as error:
+        assert "already connected" in str(error)
+    else:
+        raise AssertionError("Already connected pin was accepted")
 
 
 def _point(x, y):
