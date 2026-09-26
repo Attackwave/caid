@@ -1,5 +1,7 @@
 # CAID Chat für KiCad 10
 
+[English](README.md)
+
 CAID ist ein **IPC-Plugin im PCB-Editor**. Es erkennt die KiCad-Version und die geöffnete Platine, liest Footprint-Seiten, Größen und Umrisse und verbindet den Chat mit Codex, Claude Code, Antigravity und OpenCode über WSL, OpenAI, Anthropic Claude und Google Gemini per API oder lokalen Modellservern (Ollama und LM Studio). Außerdem liest CAID die **gespeicherte** `.kicad_sch` mit KiCads Netlist-Export und die freien Textnotizen auf dem Hauptblatt; der Chat erhält reale Netze, Pinnummern und diese Notizen. Ein Modell kann Bauteile verteilen und zwischen TOP und BOTTOM wechseln. Codex kann eine isolierte Schaltplan-Kopie bearbeiten, die KiCad vor dem Übernehmen validiert.
 
 Die Sprache folgt **KiCads Einstellung unter Einstellungen → Sprache**. CAID unterstützt Deutsch und Englisch; andere Sprachen fallen auf Englisch zurück. Bei KiCads Einstellung „Default“ verwendet CAID die Windows-Benutzersprache. Die Chat-Oberfläche übernimmt die Wahl beim Öffnen; für die Sprache des Menüeintrags KiCad neu starten. Auch die Antwortsprache des Modells folgt der gewählten Sprache.
@@ -29,11 +31,14 @@ Jedes Projekt hält Anforderungen, Antworten, Quellen, Annahmen, offene Punkte u
 
 ## Installation unter Windows
 
-Für die auf KiCad 10 unter Windows erprobte Installation werden zwei Teile verwendet:
+Voraussetzung ist KiCad 10 unter Windows mit aktivierter Option **KiCad-API aktivieren** in den Plugin-Einstellungen. Lade beide ZIPs aus dem [Release v0.23.2](https://github.com/Attackwave/caid/releases/tag/v0.23.2) herunter:
 
-1. Installiere `caid-chat-kicad10-pcm-0.23.2.zip` aus dem Downloads-Ordner über KiCads **Plugin- und Content-Verwaltung → Aus Datei installieren**. Prüfe danach im Reiter **Installiert**, dass CAID Chat als Version 0.23.2 erscheint. Der neue Code ist erst nach diesem Update und einem KiCad-Neustart aktiv. Eine zuvor manuell kopierte Version unter `Dokumente\KiCad\10.0\plugins\caid_chat` sollte außerhalb des Plugin-Suchpfads gesichert werden, damit sie nicht doppelt geladen wird. Die Paketverwaltung zeigt manuell kopierte Plugins nicht im Reiter **Installiert** an.
+1. Installiere `caid-chat-kicad10-pcm-0.23.2.zip` über KiCads **Plugin- und Content-Verwaltung → Aus Datei installieren**. Prüfe danach im Reiter **Installiert**, dass CAID Chat als Version 0.23.2 erscheint. Eine zuvor manuell kopierte Version unter `Dokumente\KiCad\10.0\plugins\caid_chat` sollte außerhalb des Plugin-Suchpfads gesichert werden, damit sie nicht doppelt geladen wird. Die Paketverwaltung zeigt manuell kopierte Plugins nicht im Reiter **Installiert** an.
 2. Entpacke `caid-chat-kicad10-launcher-0.23.2.zip` nach `Dokumente\KiCad\10.0\scripting\plugins` und ersetze die vorhandene `caid_launcher\__init__.py`. Danach muss `...\scripting\plugins\caid_launcher\__init__.py` existieren.
-3. Starte KiCad neu und öffne den PCB-Editor. Unter **Werkzeuge → Externe Plugins → CAID Chat öffnen** startet der Menü-Starter das IPC-Chatfenster.
+3. Schließe alle KiCad-Fenster und starte KiCad neu. Öffne eine gespeicherte Platine im PCB-Editor. Unter **Werkzeuge → Externe Plugins → CAID Chat öffnen** startet der Menü-Starter das IPC-Chatfenster.
+4. Gib in CAID `/status` ein. Dort sollten KiCad-Version und geöffnete Platine stehen. Bei einem API-Timeout sichere deine Arbeit, beende alle KiCad-Prozesse, öffne eine Platine erneut und gib `/verbinden` ein.
+
+Aus einem Quellcode-Checkout erzeugt `python3 scripts/build_pcm.py` beide ZIPs unter `build/`. Anschließend gelten dieselben Installationsschritte. Das Build-Skript benötigt nur die Python-Standardbibliothek; KiCad installiert die Laufzeit-Abhängigkeiten des PCM-Pakets.
 
 Der Menü-Starter nutzt KiCads älteres Action-Plugin-System nur zum Öffnen des Fensters und übergibt den Pfad der gerade geöffneten Platine. Die Verbindung des Chatfensters zur Platine verwendet weiterhin die IPC-API. Bei einem API-Ausfall bleiben dadurch der gespeicherte Projekt-Steckbrief, `/projekt` und `/status` lesbar; Änderungen an PCB und Schaltplan brauchen weiter eine funktionierende API. Dieser Aufbau wurde mit KiCad 10.0.6 unter Windows und `FlashROM42.kicad_pcb` gestartet.
 

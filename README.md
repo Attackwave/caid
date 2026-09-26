@@ -1,14 +1,21 @@
 # CAID Chat for KiCad 10
 
+[Deutsch](README.de.md)
+
 CAID is a PCB editor IPC plugin with an AI chat, live PCB context, saved schematic netlists, ERC/DRC checks, and reviewed PCB placement or schematic changes.
 
 The interface follows **KiCad's language setting**. English and German are supported; other languages fall back to English. KiCad's “Default” setting uses the Windows user language. Reopen the chat after changing language, and restart KiCad to update the launcher menu. Model answers follow the selected language.
 
 ## Windows installation
 
-1. Install `caid-chat-kicad10-pcm-0.23.2.zip` through **Plugin and Content Manager → Install from File**.
-2. Extract `caid-chat-kicad10-launcher-0.23.2.zip` to `Documents\KiCad\10.0\scripting\plugins`, replacing the existing `caid_launcher\__init__.py`.
-3. Restart KiCad. In the PCB editor, open **Tools → External Plugins → Open CAID Chat**.
+Requires KiCad 10 on Windows with **Enable KiCad API** selected in KiCad's plugin preferences. Download both ZIP files from the [v0.23.2 release](https://github.com/Attackwave/caid/releases/tag/v0.23.2):
+
+1. Install `caid-chat-kicad10-pcm-0.23.2.zip` through **Plugin and Content Manager → Install from File**. Confirm that CAID Chat appears under **Installed**.
+2. Extract `caid-chat-kicad10-launcher-0.23.2.zip` into `%USERPROFILE%\Documents\KiCad\10.0\scripting\plugins`. The resulting file must be `...\scripting\plugins\caid_launcher\__init__.py`. Replace an older copy if prompted.
+3. Close all KiCad windows and start KiCad again. Open a saved board in the PCB editor, then choose **Tools → External Plugins → Open CAID Chat**.
+4. Enter `/status` in CAID. It should show the KiCad version and the open board. If the API times out, save your work, close every KiCad process, reopen one board, and enter `/reconnect`.
+
+To build from a source checkout, run `python3 scripts/build_pcm.py`. This creates both ZIP files in `build/`; install them with the same steps. The build script needs only Python's standard library. KiCad installs the plugin's runtime dependencies when it installs the PCM package.
 
 Select **Codex (WSL sign-in)** if Codex CLI is installed and signed in within WSL. Alternatively select **OpenAI API**, **Anthropic Claude**, or **Google Gemini** and enter its model ID and API key. For local inference, start Ollama or the LM Studio server, select it in **Connection**, then click **Test model**. CAID lists installed local models, chooses the first one when the model field is empty, and checks a structured reply. The button also checks the selected cloud model. The default local address is `127.0.0.1`; WSL is not needed for these HTTP providers. The window labels an address outside the local machine as an external server. Provider, model, and server address are saved without credentials in `%APPDATA%\CAID\provider.json`; API keys remain only in the open window and are kept separate by provider.
 
