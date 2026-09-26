@@ -1,6 +1,6 @@
 # CAID Chat für KiCad 10
 
-[English](README.md)
+[English](README.md) · [Roadmap](ROADMAP.md)
 
 CAID ist ein **IPC-Plugin im PCB-Editor**. Es erkennt die KiCad-Version und die geöffnete Platine, liest Footprint-Seiten, Größen und Umrisse und verbindet den Chat mit Codex, Claude Code, Antigravity und OpenCode über WSL, OpenAI, Anthropic Claude und Google Gemini per API oder lokalen Modellservern (Ollama und LM Studio). Außerdem liest CAID die **gespeicherte** `.kicad_sch` mit KiCads Netlist-Export und die freien Textnotizen auf dem Hauptblatt; der Chat erhält reale Netze, Pinnummern und diese Notizen. Ein Modell kann Bauteile verteilen und zwischen TOP und BOTTOM wechseln. Codex kann eine isolierte Schaltplan-Kopie bearbeiten, die KiCad vor dem Übernehmen validiert.
 
