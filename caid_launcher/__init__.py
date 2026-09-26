@@ -72,4 +72,20 @@ class CaidChatLauncher(pcbnew.ActionPlugin):
                          cwd=str(entrypoint.parent), env=environment)
 
 
-CaidChatLauncher().register()
+def _superseded_by_pcm():
+    """Avoid a duplicate action when an older manual launcher is still present."""
+    user = Path.home()
+    documents = Path(os.environ.get("KICAD_DOCUMENTS_HOME", user / "Documents" / "KiCad"))
+    bundled = documents / "10.0" / "3rdparty" / "plugins" / "caid-chat" / "__init__.py"
+    legacy = documents / "10.0" / "scripting" / "plugins" / "caid_launcher" / "__init__.py"
+    try:
+        current = Path(__file__).resolve()
+        if bundled.resolve() == current:
+            return legacy.is_file() and "def _superseded_by_pcm" not in legacy.read_text(encoding="utf-8")
+        return bundled.read_text(encoding="utf-8").startswith('"""KiCad 10 menu launcher')
+    except OSError:
+        return False
+
+
+if not _superseded_by_pcm():
+    CaidChatLauncher().register()
