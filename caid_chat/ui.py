@@ -344,7 +344,8 @@ class ChatFrame(wx.Frame):
     def _probe_context(self):
         try:
             result = probe_context()
-            context = EditorContext(result["version"], result["major"], "pcb", result["document"])
+            context = EditorContext(result["version"], result["major"], "pcb",
+                                    result["document"], result.get("saved_file_exists"))
             wx.CallAfter(self._context_result, context, result["project_path"], "")
         except Exception as exc:
             wx.CallAfter(self._context_result, None, None, str(exc))
@@ -353,21 +354,30 @@ class ChatFrame(wx.Frame):
         if self._closed:
             return
         self._context_probe_running = False
+        client = None
+        if not error:
+            try:
+                from kipy import KiCad
+                client = KiCad()
+            except Exception as exc:
+                error = str(exc)
         if error:
+            if self._connection_ok and self._pending is not None:
+                self._clear_proposal()
+                self._append("CAID", self._t("proposal_discarded_disconnect"))
             self._connection_ok = False
             self._connection_error = connection_detail(error, self._language)
             self._next_context_probe = time.monotonic() + 10
             label = self._t("kicad_unavailable")
-            if self._hinted_board_name:
-                label = f"{self._hinted_board_name}  ·  {label}"
+            previous = self._hinted_board_name or self._context.document
+            if previous:
+                label = f"{os.path.basename(previous)}  ·  {label}"
             self.context_label.SetLabel(label)
             if not self._project_path:
                 self.brief_pane.SetLabel(self._t("brief_unavailable", error=error[:100]))
             self.context_label.Wrap(max(300, self.GetClientSize().width - 32))
             return
-        if not self._connection_ok:
-            from kipy import KiCad
-            self._kicad = KiCad()
+        self._kicad = client
         self._connection_ok = True
         self._connection_error = ""
         self._next_context_probe = time.monotonic() + 8
@@ -384,7 +394,10 @@ class ChatFrame(wx.Frame):
         self._project_path = project_path
         self._hinted_board_name = None
         name = os.path.basename(updated.document) if updated.document else self._t("unsaved_board")
-        self.context_label.SetLabel(f"{name}  ·  KiCad {updated.version}")
+        disk_state = (self._t("pcb_on_disk") if updated.saved_file_exists is True else
+                      self._t("pcb_not_on_disk") if updated.saved_file_exists is False else "")
+        self.context_label.SetLabel(f"{name}  ·  KiCad {updated.version}" +
+                                    (f"  ·  {disk_state}" if disk_state else ""))
         self.context_label.Wrap(max(300, self.GetClientSize().width - 32))
         self._refresh_project_brief()
         if self._design_session and not self._resume_announced:
@@ -1370,6 +1383,9 @@ class ChatFrame(wx.Frame):
 
     def _apply(self, _event=None):
         if self._busy or not self._pending:
+            return
+        if not self._connection_ok:
+            self._append("CAID", self._t("kicad_connection_error", error=self._connection_error))
             return
         if isinstance(self._pending, BriefProposal):
             try:

@@ -6,8 +6,10 @@ import subprocess
 import sys
 
 try:
+    from .context import saved_pcb_file_exists
     from .process import run_command
 except ImportError:
+    from context import saved_pcb_file_exists
     from process import run_command
 
 
@@ -36,7 +38,8 @@ def probe_context(timeout=8):
         raise RuntimeError("KiCad context probe returned invalid JSON") from exc
     if not isinstance(data, dict) or not isinstance(data.get("document"), (str, type(None))) or not isinstance(
             data.get("project_path"), (str, type(None))) or not isinstance(data.get("version"), str) or not isinstance(
-            data.get("major"), (int, type(None))) or isinstance(data.get("major"), bool):
+            data.get("major"), (int, type(None))) or isinstance(data.get("major"), bool) or not isinstance(
+            data.get("saved_file_exists"), (bool, type(None))):
         raise RuntimeError("KiCad context probe returned invalid data")
     return data
 
@@ -54,7 +57,8 @@ def _worker():
     except Exception:
         version_name, major = "unknown", None
     print(_MARKER + json.dumps({"document": document, "project_path": project_path,
-                                "version": version_name, "major": major}))
+                                "version": version_name, "major": major,
+                                "saved_file_exists": saved_pcb_file_exists(project_path, document)}))
 
 
 if __name__ == "__main__" and sys.argv[1:] == ["--worker"]:
