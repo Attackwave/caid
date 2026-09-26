@@ -1,6 +1,6 @@
 import unittest
 
-from caid_chat.schematic_connections import rewrite_pin_connections
+from caid_chat.schematic_connections import rewrite_no_connect_markers, rewrite_pin_connections
 
 
 SOURCE = '''(kicad_sch
@@ -19,6 +19,15 @@ class PinConnectionTests(unittest.TestCase):
         self.assertEqual(positions, {(47.46, 55.0)})
         self.assertIn('(label "LINK" (at 47.46 55 0)', result)
         self.assertEqual(result.count('(label "LINK"'), 2)
+
+    def test_adds_no_connect_only_at_exact_unused_pin(self):
+        result, positions = rewrite_no_connect_markers(SOURCE, [{"ref": "R1", "pin": "1"}])
+        self.assertEqual(positions, {(47.46, 55.0)})
+        self.assertIn('(no_connect (at 47.46 55)', result)
+        with self.assertRaisesRegex(ValueError, "already marked"):
+            rewrite_no_connect_markers(result, [{"ref": "R1", "pin": "1"}])
+        with self.assertRaisesRegex(ValueError, "Duplicate"):
+            rewrite_no_connect_markers(SOURCE, [{"ref": "R1", "pin": "1"}] * 2)
 
     def test_rejects_ambiguous_or_unsupported_geometry(self):
         request = [{"ref": "R1", "pin": "1", "net": "LINK"}]

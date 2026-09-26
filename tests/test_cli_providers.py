@@ -8,7 +8,7 @@ from caid_chat import cli_providers
 
 REPLY = {"answer": "OK", "edit_schematic": False, "placements": [],
          "tool_requests": [], "footprint_updates": [], "field_updates": [], "net_renames": [],
-         "pin_connections": []}
+         "pin_connections": [], "no_connect_markers": []}
 
 
 class CliProviderTests(unittest.TestCase):

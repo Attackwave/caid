@@ -8,7 +8,7 @@ from caid_chat import providers
 
 REPLY = {"answer": "Ready", "edit_schematic": False, "placements": [],
          "tool_requests": [], "footprint_updates": [], "field_updates": [], "net_renames": [],
-         "pin_connections": []}
+         "pin_connections": [], "no_connect_markers": []}
 
 
 class _Response(io.BytesIO):

@@ -21,7 +21,7 @@ try:
     from .schematic_fields import (rewrite_footprint_fields, rewrite_local_net_labels,
                                    rewrite_symbol_fields)
     from .schematic_fields import _root_forms
-    from .schematic_connections import rewrite_pin_connections
+    from .schematic_connections import rewrite_no_connect_markers, rewrite_pin_connections
 except ImportError:  # KiCad starts main.py directly from the plugin directory.
     from diagnostics import _cli_path
     from footprints import find_footprint
@@ -30,7 +30,7 @@ except ImportError:  # KiCad starts main.py directly from the plugin directory.
     from schematic_fields import (rewrite_footprint_fields, rewrite_local_net_labels,
                                   rewrite_symbol_fields)
     from schematic_fields import _root_forms
-    from schematic_connections import rewrite_pin_connections
+    from schematic_connections import rewrite_no_connect_markers, rewrite_pin_connections
 
 
 _NOTE_FORM = re.compile(r'^\((?:text|text_box)\s+("(?:\\.|[^"\\])*")', re.DOTALL)
@@ -469,7 +469,8 @@ def stage_pin_connections(board_snapshot, requests, language="en", token=None):
             name = "/" + item["net"]
             existing_names = [old for old, nodes in before_nets.items() if node in nodes]
             if existing_names:
-                if (len(existing_names) != 1 or not existing_names[0].startswith("unconnected-") or
+                if (len(existing_names) != 1 or
+                        existing_names[0] != f"unconnected-({node[0]}-Pad{node[1]})" or
                         before_nets[existing_names[0]] != [node]):
                     raise ValueError(f"Pin {node[0]}.{node[1]} is already connected")
                 expected.pop(existing_names[0])
@@ -487,6 +488,61 @@ def stage_pin_connections(board_snapshot, requests, language="en", token=None):
             fromfile=source.name + " (before)", tofile=source.name + " (proposal)"))
         (stage_dir / "change.diff").write_text(diff, encoding="utf-8")
         details = ", ".join(f"{item['ref']}.{item['pin']} → {item['net']}" for item in requests)
+        return StagedSchematic(source, candidate, stage_dir,
+                               hashlib.sha256(original).hexdigest(), diff, details,
+                               before_erc, after_erc, after_snapshot, before_snapshot)
+    except Exception:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        raise
+
+
+def stage_no_connect_markers(board_snapshot, requests, language="en", token=None):
+    """Stage explicit unused-pin markers with exact KiCad netlist/ERC checks."""
+    source = schematic_path(board_snapshot, language)
+    original = source.read_bytes()
+    updated_text, _ = rewrite_no_connect_markers(original.decode("utf-8-sig"), requests)
+    stage_dir = Path(tempfile.mkdtemp(prefix="caid-no-connects-"))
+    candidate = stage_dir / source.name
+    try:
+        candidate.write_text(updated_text, encoding="utf-8")
+        _copy_project_support(source, stage_dir)
+        with tempfile.TemporaryDirectory(prefix="caid-nc-check-") as check_dir:
+            before_root = _run_cli_netlist(source, Path(check_dir) / "before.xml", language, token)
+            after_root = _run_cli_netlist(candidate, Path(check_dir) / "after.xml", language, token)
+            before_snapshot = _netlist_snapshot(before_root, source, full=True)
+            after_snapshot = _netlist_snapshot(after_root, candidate, full=True)
+            before_erc = _erc_counts(source, Path(check_dir) / "before.json", language, token)
+            after_erc = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+        if before_snapshot["components"] != after_snapshot["components"]:
+            raise RuntimeError("KiCad components changed during a no-connect edit")
+        def net_map(root):
+            return {net.get("name", ""): sorted((node.get("ref", ""), node.get("pin", ""))
+                    for node in net.findall("node")) for net in root.findall("./nets/net")}
+        before_nets = net_map(before_root)
+        after_nets = net_map(after_root)
+        expected = {name: list(nodes) for name, nodes in before_nets.items()}
+        removable = set()
+        for item in requests:
+            node = (item["ref"], item["pin"])
+            names = [name for name, nodes in before_nets.items() if node in nodes]
+            auto_name = f"unconnected-({node[0]}-Pad{node[1]})"
+            if names and (names != [auto_name] or before_nets[auto_name] != [node]):
+                raise ValueError(f"Pin {node[0]}.{node[1]} is already connected")
+            if names:
+                removable.add(auto_name)
+        for name in removable:
+            if name not in after_nets:
+                expected.pop(name)
+        if after_nets != expected:
+            raise RuntimeError("KiCad netlist changed during a no-connect edit")
+        if after_erc[0] > before_erc[0]:
+            raise RuntimeError("No-connect marker introduced new ERC errors")
+        diff = "".join(difflib.unified_diff(
+            original.decode("utf-8-sig").splitlines(keepends=True),
+            updated_text.splitlines(keepends=True),
+            fromfile=source.name + " (before)", tofile=source.name + " (proposal)"))
+        (stage_dir / "change.diff").write_text(diff, encoding="utf-8")
+        details = ", ".join(f"{item['ref']}.{item['pin']}: no-connect" for item in requests)
         return StagedSchematic(source, candidate, stage_dir,
                                hashlib.sha256(original).hexdigest(), diff, details,
                                before_erc, after_erc, after_snapshot, before_snapshot)

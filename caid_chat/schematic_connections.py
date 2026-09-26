@@ -57,21 +57,24 @@ def _pin_location(library_form, instance, pin_number):
     return round(float(at.group(1)) + matches[0][0], 4), round(float(at.group(2)) - matches[0][1], 4)
 
 
-def rewrite_pin_connections(text, requests):
-    """Add labels at exact unconnected pin positions; CLI netlist checks follow."""
+def _validate_requests(text, requests, fields):
     if not text.lstrip().startswith("(kicad_sch") or not isinstance(requests, list) or not 1 <= len(requests) <= 10:
-        raise ValueError("Provide 1 to 10 pin connections in a KiCad schematic")
-    if any(not isinstance(item, dict) or set(item) != {"ref", "pin", "net"} or
-           not all(isinstance(item[key], str) for key in ("ref", "pin", "net")) or
+        raise ValueError("Provide 1 to 10 pin operations in a KiCad schematic")
+    if any(not isinstance(item, dict) or set(item) != fields or
+           not all(isinstance(item[key], str) for key in fields) or
            not re.fullmatch(r"[A-Za-z]{1,4}[1-9][0-9]*", item["ref"]) or
            not re.fullmatch(r"[A-Za-z0-9.+_-]{1,20}", item["pin"]) or
-           not _LOCAL_NET_NAME.fullmatch(item["net"]) for item in requests):
-        raise ValueError("Invalid pin connection request")
+           ("net" in fields and not _LOCAL_NET_NAME.fullmatch(item["net"]))
+           for item in requests):
+        raise ValueError("Invalid pin operation request")
     if len({(item["ref"], item["pin"]) for item in requests}) != len(requests):
-        raise ValueError("Duplicate pin connection request")
+        raise ValueError("Duplicate pin operation request")
+
+
+def _schematic_context(text):
     roots = [text[start:end] for start, end in _root_forms(text)]
     if any(form.startswith("(sheet ") for form in roots):
-        raise ValueError("Pin connections currently support single-sheet schematics only")
+        raise ValueError("Pin operations currently support single-sheet schematics only")
     labels = set()
     for form in roots:
         match = re.match(r'^\(label\s+' + _QUOTED, form)
@@ -103,12 +106,13 @@ def rewrite_pin_connections(text, requests):
             at = _POINT.match(_named_child(form, "at") or "")
             if at:
                 occupied.add((round(float(at.group(1)), 4), round(float(at.group(2)), 4)))
-    additions = []
+    return labels, libraries, placed, occupied
+
+
+def _pin_positions(requests, libraries, placed, occupied):
     positions = set()
     for item in requests:
-        ref, pin, net = item["ref"], item["pin"], item["net"]
-        if net not in labels:
-            raise ValueError(f"Existing local net label not found: {net}")
+        ref, pin = item["ref"], item["pin"]
         instances = placed.get(ref, [])
         if len(instances) != 1:
             raise ValueError(f"Expected exactly one placed symbol unit for {ref}")
@@ -119,7 +123,37 @@ def rewrite_pin_connections(text, requests):
         if (x, y) in occupied or (x, y) in positions:
             raise ValueError(f"Pin position is already marked or ambiguous: {ref}.{pin}")
         positions.add((x, y))
+        yield item, x, y
+
+
+def _append_forms(text, additions):
+    end = text.rstrip().rfind(")")
+    return text[:end] + "\n" + "\n".join(additions) + "\n" + text[end:]
+
+
+def rewrite_pin_connections(text, requests):
+    """Add labels at exact unconnected pin positions; CLI netlist checks follow."""
+    _validate_requests(text, requests, {"ref", "pin", "net"})
+    labels, libraries, placed, occupied = _schematic_context(text)
+    if any(item["net"] not in labels for item in requests):
+        raise ValueError("Existing local net label not found")
+    additions = []
+    positions = set()
+    for item, x, y in _pin_positions(requests, libraries, placed, occupied):
+        net = item["net"]
+        positions.add((x, y))
         additions.append(f'  (label {json.dumps(net, ensure_ascii=False)} (at {x:g} {y:g} 0)'
                          f' (effects (font (size 1.27 1.27))) (uuid "{uuid.uuid4()}"))')
-    end = text.rstrip().rfind(")")
-    return text[:end] + "\n" + "\n".join(additions) + "\n" + text[end:], positions
+    return _append_forms(text, additions), positions
+
+
+def rewrite_no_connect_markers(text, requests):
+    """Mark exact placed pins as unused; a full KiCad check follows."""
+    _validate_requests(text, requests, {"ref", "pin"})
+    _, libraries, placed, occupied = _schematic_context(text)
+    additions = []
+    positions = set()
+    for _, x, y in _pin_positions(requests, libraries, placed, occupied):
+        positions.add((x, y))
+        additions.append(f'  (no_connect (at {x:g} {y:g}) (uuid "{uuid.uuid4()}"))')
+    return _append_forms(text, additions), positions

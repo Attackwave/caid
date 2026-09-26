@@ -12,7 +12,7 @@ except ImportError:
 
 DESIGN_PROMPT = """CAID_NEW_DESIGN_MODE: Produce a NEW single-sheet KiCad circuit as structured data.
 Return a JSON object as the ENTIRE `answer` string, and keep edit_schematic=false,
-placements=[], footprint_updates=[], field_updates=[], net_renames=[], pin_connections=[] and tool_requests=[]. Do not modify existing files.
+placements=[], footprint_updates=[], field_updates=[], net_renames=[], pin_connections=[], no_connect_markers=[] and tool_requests=[]. Do not modify existing files.
 
 The project_brief in the PCB snapshot is the source of truth for user requirements;
 the saved KiCad schematic and PCB remain the source of truth for actual nets and
@@ -63,7 +63,7 @@ ask for it instead of guessing. No markdown fence or extra prose in the answer s
 def parse_design_answer(result):
     if (result["tool_requests"] or result["placements"] or result["footprint_updates"] or
             result.get("field_updates") or result.get("net_renames") or
-            result.get("pin_connections") or result["edit_schematic"]):
+            result.get("pin_connections") or result.get("no_connect_markers") or result["edit_schematic"]):
         raise ValueError("Design model requested unrelated changes")
     try:
         data = json.loads(result["answer"])

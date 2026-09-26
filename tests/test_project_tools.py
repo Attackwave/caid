@@ -86,6 +86,17 @@ class ProjectToolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Invalid pin connection"):
             _validate_result({**reply, "pin_connections": [{"ref": "R3", "pin": 1, "net": "LINK"}]})
 
+    def test_no_connect_uses_shared_provider_contract(self):
+        reply = {"answer": "Mark R3.2 unused", "edit_schematic": False,
+                 "placements": [], "tool_requests": [], "footprint_updates": [],
+                 "field_updates": [], "net_renames": [], "pin_connections": [],
+                 "no_connect_markers": [{"ref": "R3", "pin": "2"}]}
+        self.assertEqual(_validate_result(reply)["no_connect_markers"], reply["no_connect_markers"])
+        with self.assertRaisesRegex(RuntimeError, "separate review"):
+            _validate_result({**reply, "pin_connections": [{"ref": "R3", "pin": "2", "net": "LINK"}]})
+        with self.assertRaisesRegex(RuntimeError, "Invalid no-connect"):
+            _validate_result({**reply, "no_connect_markers": [{"ref": "R3", "pin": 2}]})
+
 
 if __name__ == "__main__":
     unittest.main()
