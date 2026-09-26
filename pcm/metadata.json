@@ -13,7 +13,7 @@
   "resources": {},
   "versions": [
     {
-      "version": "0.23.9",
+      "version": "0.24.0",
       "status": "development",
       "runtime": "ipc",
       "kicad_version": "10.0",

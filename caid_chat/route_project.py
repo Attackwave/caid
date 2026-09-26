@@ -14,12 +14,14 @@ try:
     from .diagnostics import _cli_path
     from .process import run_command
     from .project_brief import load_brief
+    from .project_recovery import StageGuard
     from .routing import preflight, validate_contract
     from .project_rules import synchronize_project_rules
 except ImportError:
     from diagnostics import _cli_path
     from process import run_command
     from project_brief import load_brief
+    from project_recovery import StageGuard
     from routing import preflight, validate_contract
     from project_rules import synchronize_project_rules
 
@@ -154,7 +156,9 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
     source_fingerprints = _source_fingerprints(project, board_name)
     source_hash = source_fingerprints[board_name]
     staging = Path(tempfile.mkdtemp(prefix=".caid-routing-", dir=project))
+    guard = None
     try:
+        guard = StageGuard(staging, "routing")
         _project_copy(project, staging, board_name)
         _require_source_unchanged(project, board_name, source_fingerprints)
         working = staging / board_name
@@ -230,6 +234,7 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
         if token:
             token.check()
         _require_source_unchanged(project, board_name, source_fingerprints)
+        guard.close()
         staging.replace(destination)
         return {"directory": str(destination), "accepted": accepted, "skipped": skipped,
                 "eligible_before": len(all_candidates), "attempted": len(candidates),
@@ -237,5 +242,9 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
                 "unconnected_before": len(baseline.get("unconnected_items", [])),
                 "unconnected_after": len(report.get("unconnected_items", []))}
     finally:
-        if staging.exists():
-            shutil.rmtree(staging)
+        try:
+            if guard is not None:
+                guard.close()
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)

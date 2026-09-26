@@ -30,6 +30,7 @@ def main() -> None:
         assert archive.testzip() is None
         assert "plugins/providers.py" in archive.namelist()
         assert "plugins/context_probe.py" in archive.namelist()
+        assert "plugins/project_recovery.py" in archive.namelist()
         assert "plugins/provider_settings.py" in archive.namelist()
         assert "plugins/plugin.json" in archive.namelist()
         assert "plugins/__init__.py" in archive.namelist()

@@ -21,6 +21,7 @@ try:
     from .diagnostics import _cli_path
     from .process import run_command
     from .project_rules import synchronize_project_rules
+    from .project_recovery import StageGuard
     from .component_review import review_components
 except ImportError:
     from footprints import find_footprint
@@ -29,6 +30,7 @@ except ImportError:
     from diagnostics import _cli_path
     from process import run_command
     from project_rules import synchronize_project_rules
+    from project_recovery import StageGuard
     from component_review import review_components
 
 
@@ -495,7 +497,9 @@ def stage_new_design(spec, parent, *, language="en", token=None, symbol_root=Non
                     20 <= item["pcb_y"] <= 20 + outline["height_mm"]):
                 raise ValueError(f"Footprint centre {ref} is outside the requested board size")
     staging = Path(tempfile.mkdtemp(prefix=".caid-design-", dir=parent))
+    guard = None
     try:
+        guard = StageGuard(staging, "design")
         name = spec["name"]
         schematic = staging / (name + ".kicad_sch")
         schematic.write_text(render_schematic(spec, resolved, connections), encoding="utf-8")
@@ -574,6 +578,7 @@ def stage_new_design(spec, parent, *, language="en", token=None, symbol_root=Non
             raise FileExistsError(f"Design already exists: {destination}")
         if token:
             token.check()
+        guard.close()
         staging.replace(destination)
         return {"directory": str(destination), "name": name, "components": len(resolved),
                 "nets": len(spec["nets"]), "erc_errors": erc[0], "erc_warnings": erc[1],
@@ -582,4 +587,8 @@ def stage_new_design(spec, parent, *, language="en", token=None, symbol_root=Non
                 "parts_needing_review": sum(item["status"] == "needs_review" for item in part_review),
                 "open_questions": len(review["open_questions"])}
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        try:
+            if guard is not None:
+                guard.close()
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)

@@ -19,6 +19,13 @@ MESSAGES = {
     "action_help": ("Help and commands", "Hilfe und Befehle"),
     "action_reconnect": ("Reconnect to KiCad", "KiCad-Verbindung prüfen"),
     "action_project": ("Project brief", "Projekt-Steckbrief"),
+    "action_recovery": ("Recovery copies", "Arbeitskopien wiederherstellen"),
+    "recovery_no_project": ("Open a saved project first to inspect recovery copies.",
+                            "Öffne zuerst ein gespeichertes Projekt, um Arbeitskopien zu prüfen."),
+    "recovery_archived": ("Moved {count} abandoned copies to {directory}.",
+                          "{count} verwaiste Kopien nach {directory} verschoben."),
+    "recovery_failed": ("Could not inspect recovery copies: {error}",
+                        "Arbeitskopien konnten nicht geprüft werden: {error}"),
     "action_project_suggest": ("Suggest project details", "Projektangaben vorschlagen"),
     "brief_panel": ("Project brief", "Projekt-Steckbrief"),
     "kicad_connecting": ("Connecting to KiCad …", "Verbinde mit KiCad …"),
@@ -99,6 +106,7 @@ MESSAGES = {
         "/project shows the project brief, requirements and open questions.\n\n"
         "/project suggest proposes project brief changes from the conversation for review.\n\n"
         "/project history shows recent requirement changes.\n\n"
+        "/recovery shows interrupted project copies; /recovery save moves abandoned ones to CAID-Recovery.\n\n"
         "/project set Topic: Value records a user-provided requirement.\n\n"
         "/project assumption Topic: Value records an assumption.\n\n"
         "/project verified Topic: Value | Source records a cited claim for review.\n\n"
@@ -123,6 +131,7 @@ MESSAGES = {
         "/projekt zeigt Steckbrief, Anforderungen und offene Fragen.\n\n"
         "/projekt vorschlag schlägt Angaben aus dem Gespräch zur Prüfung vor.\n\n"
         "/projekt historie zeigt die letzten Änderungen.\n\n"
+        "/wiederherstellung zeigt unterbrochene Arbeitskopien; /wiederherstellung sichern verschiebt verwaiste Kopien nach CAID-Recovery.\n\n"
         "/projekt set Thema: Wert hält eine Nutzerangabe fest.\n\n"
         "/projekt annahme Thema: Wert hält eine Annahme fest.\n\n"
         "/projekt belegt Thema: Wert | Quelle hält eine belegte Angabe zur Prüfung fest.\n\n"

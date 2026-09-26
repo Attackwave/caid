@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from caid_chat.route_project import route_project
+from caid_chat.circuit_design import stage_new_design
+from caid_chat.project_recovery import scan_stages
 from caid_chat.routing import default_contract, set_layers, set_limits
 from caid_chat.schematic import stage_field_updates
 
@@ -47,6 +49,26 @@ def check_field_preview(parent):
     finally:
         staged.cleanup()
     print("Field preview: ERC unchanged; source schematic preserved")
+
+
+def check_new_design(parent):
+    project = parent / "design-draft"
+    project.mkdir()
+    spec = {"name": "RecoverySmoke", "board": {"width_mm": 80, "height_mm": 30},
+            "components": [
+                {"ref": ref, "symbol": "Device:R", "value": "10k",
+                 "footprint": "Resistor_SMD:R_0805_2012Metric",
+                 "pcb_x_mm": x, "pcb_y_mm": 35}
+                for ref, x in (("R1", 35), ("R2", 70))],
+            "nets": [{"name": "LINK", "nodes": [{"ref": "R1", "pin": "2"},
+                                                 {"ref": "R2", "pin": "1"}]}]}
+    result = stage_new_design(spec, project)
+    output = Path(result["directory"])
+    assert output.joinpath("RecoverySmoke.kicad_sch").is_file()
+    assert output.joinpath("RecoverySmoke.kicad_pcb").is_file()
+    assert result["drc_errors"] == 0
+    assert scan_stages(project) == []
+    print("New design: saved schematic and PCB; no staging copy left behind")
 
 
 def _point(x, y):
@@ -100,6 +122,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="caid-integration-") as directory:
         parent = Path(directory)
         check_field_preview(parent)
+        check_new_design(parent)
         check_route_continuation(parent)
     print("KiCad 10 integration checks passed")
 
