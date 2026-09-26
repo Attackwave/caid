@@ -24,7 +24,7 @@ from caid_chat.project_recovery import scan_stages
 from caid_chat.routing import default_contract, set_layers, set_limits
 from caid_chat.schematic import (apply_schematic_edit, stage_field_updates,
                                  stage_net_renames, stage_no_connect_markers,
-                                 stage_pin_connections)
+                                 stage_pin_connections, stage_pin_disconnections)
 
 
 KICAD_ROOT = Path(sys.executable).resolve().parent.parent
@@ -134,6 +134,22 @@ def check_new_design(parent):
     else:
         raise AssertionError("Connected pin was accepted as no-connect")
     print("No-connect: saved KiCad netlist and ERC verified; Apply kept a backup")
+    original = hashlib.sha256(schematic.read_bytes()).hexdigest()
+    staged = stage_pin_disconnections(
+        {"project_path": str(output), "document": "RecoverySmoke.kicad_pcb"},
+        [{"ref": "R3", "pin": "1", "net": "CLOCK"}])
+    try:
+        before = {item["name"]: item["nodes"] for item in staged.before_snapshot["nets"]}
+        after = {item["name"]: item["nodes"] for item in staged.candidate_snapshot["nets"]}
+        assert {"ref": "R3", "pin": "1"} in before["/CLOCK"]
+        assert {"ref": "R3", "pin": "1"} not in after["/CLOCK"]
+        assert staged.erc_after[0] >= staged.erc_before[0]
+        assert hashlib.sha256(schematic.read_bytes()).hexdigest() == original
+        backup = apply_schematic_edit(staged)
+        assert hashlib.sha256(backup.read_bytes()).hexdigest() == original
+    finally:
+        staged.cleanup()
+    print("Pin disconnection: only R3.1 left CLOCK; ERC result and backup verified")
 
 
 def _point(x, y):

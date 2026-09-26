@@ -86,6 +86,9 @@ def describe_design_plan(plan, language="en"):
                f"Pad-Netzabweichungen zum Schaltplan: {plan.pad_differences_before} → {plan.pad_differences_after}."),
              t(f"Footprint ID differences: {plan.footprint_differences_before} → {plan.footprint_differences_after}.",
                f"Footprint-ID-Abweichungen: {plan.footprint_differences_before} → {plan.footprint_differences_after}.")]
+    if after_e > before_e:
+        lines.insert(2, t("New ERC errors: inspect and resolve them before using the circuit.",
+                          "Neue ERC-Fehler: Prüfe und behebe sie, bevor du die Schaltung verwendest."))
     if plan.footprint_changes:
         lines.append(t("Footprint assignments:", "Footprint-Zuordnungen:"))
         lines.extend(f"  {ref}: {old or '∅'} → {new or '∅'}"
