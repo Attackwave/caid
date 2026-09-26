@@ -11,7 +11,7 @@ from caid_chat.context_probe import probe_context
 class ContextProbeTests(unittest.TestCase):
     def test_parses_only_marked_context(self):
         payload = {"document": "demo.kicad_pcb", "project_path": "C:/Demo",
-                   "version": "10.0.6", "major": 10}
+                   "version": "10.0.6", "major": 10, "saved_file_exists": True}
         output = "startup message\nCAID_CONTEXT=" + json.dumps(payload) + "\n"
         with patch("caid_chat.context_probe.run_command", return_value=subprocess.CompletedProcess(
                 ["python"], 0, output, "")) as run:
@@ -25,7 +25,8 @@ class ContextProbeTests(unittest.TestCase):
                 probe_context(timeout=4)
 
     def test_rejects_missing_or_invalid_context(self):
-        for output in ("", 'CAID_CONTEXT={"version":"10","major":true,"document":null,"project_path":null}\n'):
+        for output in ("", 'CAID_CONTEXT={"version":"10","major":true,"document":null,"project_path":null}\n',
+                       'CAID_CONTEXT={"version":"10","major":10,"document":null,"project_path":null,"saved_file_exists":"yes"}\n'):
             with self.subTest(output=output), patch("caid_chat.context_probe.run_command",
                                                       return_value=subprocess.CompletedProcess(
                                                           ["python"], 0, output, "")):

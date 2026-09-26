@@ -1,6 +1,6 @@
 # CAID roadmap
 
-This roadmap starts from v0.24.0. It describes the currently known work needed to turn CAID from a useful KiCad 10 prototype into a dependable, general-purpose circuit and PCB design assistant. The Amiga ROM adapter is one demanding test project, not a product-specific mode or the basis for general electrical assumptions.
+This roadmap starts from v0.24.1. It describes the currently known work needed to turn CAID from a useful KiCad 10 prototype into a dependable, general-purpose circuit and PCB design assistant. The Amiga ROM adapter is one demanding test project, not a product-specific mode or the basis for general electrical assumptions.
 
 ## Planning basis
 
@@ -11,7 +11,7 @@ This roadmap starts from v0.24.0. It describes the currently known work needed t
 
 ## Current baseline
 
-M1 is in progress. v0.23.8 adds a bounded subprocess for the KiCad context probe, process-tree cancellation, another source check before publishing a design or route copy, unique schematic backups, and a repeatable Windows KiCad integration script. v0.23.9 also fingerprints the schematic, project rules, project brief, and local libraries during routing and rejects copies based on changed inputs. v0.24.0 marks in-progress project copies with file locks and provides recovery commands for abandoned jobs. Editor restart and upgrade scenarios still need broader in-editor coverage.
+M1 is in progress. v0.23.8 adds a bounded subprocess for the KiCad context probe, process-tree cancellation, another source check before publishing a design or route copy, unique schematic backups, and a repeatable Windows KiCad integration script. v0.23.9 also fingerprints the schematic, project rules, project brief, and local libraries during routing and rejects copies based on changed inputs. v0.24.0 marks in-progress project copies with file locks and provides recovery commands for abandoned jobs. v0.24.1 reports saved PCB file presence, refreshes the KiCad client after each successful probe, and discards pending changes when the connection is lost. Editor restart and upgrade scenarios still need broader in-editor coverage.
 
 CAID already installs through a KiCad PCM repository; connects to the open PCB; reads saved schematic netlists; runs ERC and DRC; tracks a project brief; stages new single-sheet circuits and unrouted boards; previews selected schematic fields and PCB placement; and routes bounded batches on isolated PCB copies. It supports WSL CLIs, cloud APIs, and local model servers. Routing uses local path search followed by KiCad DRC; part evidence is recorded but not independently authenticated. A successful check is evidence for the stated check only.
 

@@ -30,6 +30,11 @@ MESSAGES = {
     "brief_panel": ("Project brief", "Projekt-Steckbrief"),
     "kicad_connecting": ("Connecting to KiCad …", "Verbinde mit KiCad …"),
     "kicad_unavailable": ("KiCad API unavailable · retrying", "KiCad-API nicht erreichbar · erneuter Versuch folgt"),
+    "pcb_on_disk": ("PCB file on disk", "PCB-Datei auf Festplatte"),
+    "pcb_not_on_disk": ("PCB file not saved", "PCB-Datei nicht gespeichert"),
+    "proposal_discarded_disconnect": (
+        "KiCad connection was lost. The pending change was discarded; create a new preview after reconnecting.",
+        "Die KiCad-Verbindung wurde unterbrochen. Der offene Vorschlag wurde verworfen; erstelle nach dem Verbinden eine neue Vorschau."),
     "kicad_connection_error": ("KiCad API did not respond: {error}\nUse /reconnect to try again. If it still times out, save your work and fully restart KiCad.",
                                "KiCad-API hat nicht geantwortet: {error}\nMit /verbinden erneut prüfen. Falls es weiter scheitert, Arbeit sichern und KiCad vollständig neu starten."),
     "review_title": ("Review proposed change", "Änderung prüfen"),

@@ -12,6 +12,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "caid_chat"))
 
 
 class FakeKiCad:
+    instances = 0
+
+    def __init__(self):
+        type(self).instances += 1
+
     def get_version(self):
         return SimpleNamespace(full_version="10.0.6", major=10)
 
@@ -47,6 +52,9 @@ def main():
                                 "kipy.proto": proto, "kipy.proto.common": common})
         import wx
         from ui import ChatFrame
+        from context import EditorContext
+        import kipy
+        kipy.KiCad = FakeKiCad
 
         app = wx.App(False)
         frame = ChatFrame(FakeKiCad())
@@ -86,6 +94,25 @@ def main():
         frame.provider.SetSelection(7)  # Ollama
         frame._provider_changed(None)
         assert frame.server_url.GetValue() == "http://127.0.0.1:11434"
+        context = EditorContext("10.0.6", 10, "pcb", saved_board.name, True)
+        frame._context_result(context, str(saved_board.parent), "")
+        assert frame._connection_ok
+        assert ("PCB file on disk" in frame.context_label.GetLabel() or
+                "PCB-Datei auf Festplatte" in frame.context_label.GetLabel())
+        first_client = frame._kicad
+        frame._pending = ([], {})
+        frame._context_result(None, None, "Connection refused")
+        assert not frame._connection_ok and frame._pending is None
+        assert saved_board.name in frame.context_label.GetLabel()
+        frame._context_result(context, str(saved_board.parent), "")
+        assert frame._connection_ok and frame._kicad is not first_client
+        assert FakeKiCad.instances >= 2
+        kipy.KiCad = lambda: (_ for _ in ()).throw(RuntimeError("client unavailable"))
+        frame._context_result(context, str(saved_board.parent), "")
+        assert not frame._connection_ok
+        assert "unavailable" in frame.context_label.GetLabel() or \
+               "nicht erreichbar" in frame.context_label.GetLabel()
+        kipy.KiCad = FakeKiCad
         frame.Close()
         saved = (Path(appdata) / "CAID" / "provider.json").read_text(encoding="utf-8")
         assert '"provider": "ollama"' in saved
