@@ -1,6 +1,6 @@
 # CAID Chat for KiCad 10
 
-[Deutsch](README.de.md)
+[Deutsch](README.de.md) · [Roadmap](ROADMAP.md)
 
 CAID is a PCB editor IPC plugin with an AI chat, live PCB context, saved schematic netlists, ERC/DRC checks, and reviewed PCB placement or schematic changes.
 
