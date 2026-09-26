@@ -21,6 +21,7 @@ try:
     from .diagnostics import _cli_path
     from .process import run_command
     from .project_rules import synchronize_project_rules
+    from .component_review import review_components
 except ImportError:
     from footprints import find_footprint
     from schematic_fields import _root_forms
@@ -28,6 +29,7 @@ except ImportError:
     from diagnostics import _cli_path
     from process import run_command
     from project_rules import synchronize_project_rules
+    from component_review import review_components
 
 
 _ID = re.compile(r"^[A-Za-z0-9_.+\-]+:[A-Za-z0-9_.+\-]+$")
@@ -36,6 +38,7 @@ _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,60}$")
 _QUOTED = r'("(?:\\.|[^"\\])*")'
 _PIN_AT = re.compile(r"\(at\s+(-?[0-9.]+)\s+(-?[0-9.]+)\s+(-?[0-9.]+)\)")
 _PIN_NUMBER = re.compile(r"\(number\s+" + _QUOTED)
+_PIN_NAME = re.compile(r"\(name\s+" + _QUOTED)
 _PAD_NUMBER = re.compile(r"\(pad\s+" + _QUOTED)
 _SYMBOL_LIBRARY = re.compile(r'\(lib\s+\(name\s+"([^"\\]+)"\).*?\(uri\s+"\$\{KIPRJMOD\}/([^"\\]+)"\)', re.S)
 
@@ -129,6 +132,7 @@ def _library_symbol(identifier, root, project_symbols=None):
     match = re.match(r"\(symbol\s+" + _QUOTED, form)
     if match is not None:
         pins = {}
+        pin_names = {}
         pin_units = {}
         unit_numbers = set()
         for unit_start, unit_end in _root_forms(form):
@@ -149,21 +153,25 @@ def _library_symbol(identifier, root, project_symbols=None):
                 if not pin.startswith("(pin "):
                     continue
                 number = _PIN_NUMBER.search(pin)
+                name_match = _PIN_NAME.search(pin)
                 at = _PIN_AT.search(pin)
-                if number is None or at is None:
+                if number is None or name_match is None or at is None:
                     raise ValueError(f"Cannot read pins of {identifier}")
                 pin_number = json.loads(number.group(1))
+                pin_name = json.loads(name_match.group(1))
                 if pin_number in pins:
                     if (pin_units[pin_number] == unit_number and
-                            pins[pin_number] == (float(at.group(1)), float(at.group(2)))):
+                            pins[pin_number] == (float(at.group(1)), float(at.group(2))) and
+                            pin_names[pin_number] == pin_name):
                         continue
                     raise ValueError(f"Duplicate pin number {pin_number} in {identifier}; shared pins need review")
                 pins[pin_number] = (float(at.group(1)), float(at.group(2)))
+                pin_names[pin_number] = pin_name
                 pin_units[pin_number] = unit_number
         if not pins:
             raise ValueError(f"Symbol has no supported pins: {identifier}")
         embedded = form[:match.start(1)] + _quote(identifier) + form[match.end(1):]
-        return embedded, pins, pin_units, sorted(unit_numbers) or [1]
+        return embedded, pins, pin_names, pin_units, sorted(unit_numbers) or [1]
     raise ValueError(f"Symbol not found: {identifier}")
 
 
@@ -203,7 +211,7 @@ def validate_design(spec, project_dir, *, symbol_root=None, footprint_root=None)
         value = item.get("value")
         if not isinstance(identifier, str) or not isinstance(footprint, str) or not isinstance(value, str) or not value.strip():
             raise ValueError(f"Incomplete component {ref}")
-        embedded, pins, pin_units, units = _library_symbol(identifier, symbol_root, project_symbols)
+        embedded, pins, pin_names, pin_units, units = _library_symbol(identifier, symbol_root, project_symbols)
         found = find_footprint(project_dir, footprint, footprint_root)
         if found is None:
             raise ValueError(f"Footprint not installed for {ref}: {footprint}")
@@ -239,6 +247,7 @@ def validate_design(spec, project_dir, *, symbol_root=None, footprint_root=None)
             positions[unit] = (unit_x, unit_y)
         symbol_uuid = str(uuid.uuid4())
         resolved[ref] = {"source": item, "embedded": embedded, "pins": pins,
+                         "pin_names": pin_names,
                          "pin_units": pin_units, "units": units, "unit_positions": positions,
                          "symbol_file": str(project_symbols.get(identifier.split(":", 1)[0], "")),
                          "footprint_file": found["file"], "footprint_source": found["source"],
@@ -460,6 +469,7 @@ def stage_new_design(spec, parent, *, language="en", token=None, symbol_root=Non
         raise ValueError(f"Project folder not found: {parent}")
     resolved, connections = validate_design(spec, parent, symbol_root=symbol_root,
                                             footprint_root=footprint_root)
+    part_review = review_components(spec, resolved)
     outline = spec.get("board")
     if outline is not None:
         if not isinstance(outline, dict) or set(outline) != {"width_mm", "height_mm"}:
@@ -514,6 +524,17 @@ def stage_new_design(spec, parent, *, language="en", token=None, symbol_root=Non
                                  spec.get("routing"))
         drc = _check_pcb_parity(staging, name, language, token)
         (staging / "design.json").write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        review = {"schema_version": 1, "design": name,
+                  "checks": {"netlist_pin_nets": "passed", "pcb_parity": "passed",
+                             "board_readback": "passed", "erc_errors": erc[0],
+                             "erc_warnings": erc[1], "drc_errors": drc[0],
+                             "drc_warnings": drc[1]},
+                  "part_evidence": part_review,
+                  "open_questions": spec.get("design_brief", {}).get("deferred_questions", [])
+                  if isinstance(spec.get("design_brief"), dict) else [],
+                  "manufacturing_approval": "not_granted"}
+        (staging / "CAID-REVIEW.json").write_text(
+            json.dumps(review, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         (staging / "CAID-REVIEW.txt").write_text(
             f"CAID design draft: {name}\nComponents: {len(resolved)}\nNets: {len(spec['nets'])}\n"
             + (f"User requirements: {json.dumps(spec['design_brief'], ensure_ascii=False)}\n"
@@ -523,6 +544,8 @@ def stage_new_design(spec, parent, *, language="en", token=None, symbol_root=Non
             f"KiCad ERC: {erc[0]} errors, {erc[1]} warnings\n"
             f"KiCad DRC: {drc[0]} errors, {drc[1]} warnings; schematic parity: 0 differences\n"
             f"Saved PCB readback: {len(board_facts['components'])} footprints, outline {board_facts['outline']}\n"
+            f"Part evidence: {sum(item['status'] == 'documented' for item in part_review)} documented, "
+            f"{sum(item['status'] == 'needs_review' for item in part_review)} need review.\n"
             + (f"KiCad routing rules synchronized: {json.dumps(spec['routing']['limits_mm'])}; "
                f"{board_facts['copper_layers']} copper layers. Fabricator limits remain unverified.\n"
                if spec.get("routing") else "Routing rules are open; set board constraints before routing.\n") +
@@ -540,6 +563,8 @@ def stage_new_design(spec, parent, *, language="en", token=None, symbol_root=Non
         return {"directory": str(destination), "name": name, "components": len(resolved),
                 "nets": len(spec["nets"]), "erc_errors": erc[0], "erc_warnings": erc[1],
                 "drc_errors": drc[0], "drc_warnings": drc[1],
-                "routing": spec.get("routing")}
+                "routing": spec.get("routing"), "part_evidence": part_review,
+                "parts_needing_review": sum(item["status"] == "needs_review" for item in part_review),
+                "open_questions": len(review["open_questions"])}
     finally:
         shutil.rmtree(staging, ignore_errors=True)
