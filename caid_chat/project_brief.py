@@ -258,8 +258,9 @@ def complete_design(project_path, destination, session, result, review=None):
                                    "drc_errors", "drc_warnings")}
     target["requirement_review"] = review or []
     target["history"] = list(source["history"]) if inherited else []
-    target["routing"] = (json.loads(json.dumps(source.get("routing"), ensure_ascii=False))
-                         if inherited else None)
+    target["routing"] = (json.loads(json.dumps(result["routing"], ensure_ascii=False))
+                         if result.get("routing") else
+                         json.loads(json.dumps(source.get("routing"), ensure_ascii=False)) if inherited else None)
     target["origin_project"] = str(project_path)
     save_brief(destination, target)
     source["active_design"] = None

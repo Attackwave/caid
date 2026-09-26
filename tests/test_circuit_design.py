@@ -58,6 +58,45 @@ class CircuitDesignTests(unittest.TestCase):
         self.assertEqual(parts["U1"]["symbol_file"], str(self.root / "Local.kicad_sym"))
         self.assertIn('"Local:Device"', parts["U1"]["embedded"])
 
+    def test_inherited_symbol_uses_parent_pins_and_child_properties(self):
+        (self.symbols / "Test.kicad_sym").write_text('''(kicad_symbol_lib (version 20260101)
+ (symbol "Base" (property "Value" "Base") (symbol "Base_1_1"
+  (pin passive line (at -2.54 0 0) (length 2.54) (name "A") (number "1"))
+  (pin passive line (at 2.54 0 180) (length 2.54) (name "B") (number "2"))))
+ (symbol "Child" (extends "Base") (property "Value" "Child")))''')
+        for component in self.spec["components"]:
+            component["symbol"] = "Test:Child"
+        parts, connections = validate_design(self.spec, self.root,
+                                             symbol_root=self.symbols, footprint_root=self.footprints)
+        self.assertEqual(set(parts["U1"]["pins"]), {"1", "2"})
+        self.assertIn('(symbol "Child_1_1"', parts["U1"]["embedded"])
+        self.assertIn('(property "Value" "Child")', parts["U1"]["embedded"])
+        self.assertEqual(connections[("U1", "2")], "LINK")
+
+    def test_multi_unit_symbol_keeps_power_unit_pins(self):
+        (self.symbols / "Test.kicad_sym").write_text('''(kicad_symbol_lib (version 20260101)
+ (symbol "Base" (symbol "Base_1_1"
+  (pin passive line (at -2.54 0 0) (length 2.54) (name "A") (number "1")))
+  (symbol "Base_2_1"
+  (pin passive line (at 2.54 0 180) (length 2.54) (name "B") (number "2")))
+  (symbol "Base_3_0"
+  (pin power_in line (at 0 2.54 270) (length 2.54) (name "VCC") (number "3")))
+  (symbol "Base_3_1" (rectangle (start -1 -1) (end 1 1))))
+ (symbol "Child" (extends "Base") (property "Value" "Child")))''')
+        (self.footprints / "Test.pretty" / "Part.kicad_mod").write_text('''(footprint "Part"
+ (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu"))
+ (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu"))
+ (pad "3" smd rect (at 4 0) (size 1 1) (layers "F.Cu")))''')
+        for component in self.spec["components"]:
+            component["symbol"] = "Test:Child"
+        parts, connections = validate_design(self.spec, self.root,
+                                             symbol_root=self.symbols, footprint_root=self.footprints)
+        self.assertEqual(parts["U1"]["units"], [1, 2, 3])
+        self.assertEqual(parts["U1"]["pin_units"]["3"], 3)
+        source = render_schematic(self.spec, parts, connections)
+        self.assertIn('(unit 3)', source)
+        self.assertIn('(symbol "Child_3_0"', source)
+
     def test_no_connect_marker_must_not_hide_a_real_net(self):
         self.spec["no_connects"] = [{"ref": "U1", "pin": "1"}]
         parts, connections = validate_design(self.spec, self.root,

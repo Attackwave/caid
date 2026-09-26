@@ -85,7 +85,7 @@ def preflight(contract, board_snapshot, drc_report=None):
     if layers == 1 and board_snapshot.get("counts", {}).get("vias", 0):
         blockers.append("existing vias conflict with one-sided routing")
     if not board_snapshot.get("outline_mm"):
-        blockers.append("closed rectangular board outline not confirmed")
+        blockers.append("closed board outline not confirmed")
     target = board_snapshot.get("target_size_mm")
     if isinstance(target, dict):
         width, height = target.get("width_mm"), target.get("height_mm")
@@ -157,12 +157,12 @@ def describe(contract, board_snapshot, drc_report=None, language="en"):
                      f"{len(drc_report.get('unconnected_items', []))}")
     lines.append("")
     lines.append(("Preflight blockers:" if not de else "Sperren vor dem Routing:") if blockers else
-                 ("Preflight passed; router and rule synchronization still required." if not de else
-                  "Vorprüfung bestanden; Router und Abgleich mit KiCad-Regeln fehlen noch."))
+                 ("Preflight passed; routing will synchronize rules in a project copy." if not de else
+                  "Vorprüfung bestanden; beim Routing werden Regeln in der Projektkopie übernommen."))
     translations = {
         "layer count missing": "Lagenzahl fehlt",
         "KiCad copper stackup could not be read": "KiCad-Kupferlagen konnten nicht gelesen werden",
-        "closed rectangular board outline not confirmed": "geschlossener rechteckiger Platinenumriss nicht bestätigt",
+        "closed board outline not confirmed": "geschlossener Platinenumriss nicht bestätigt",
         "saved-board DRC not run": "DRC der gespeicherten Platine noch nicht ausgeführt",
     }
     for item in blockers:

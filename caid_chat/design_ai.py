@@ -42,6 +42,8 @@ The spec shape is:
 "value":"10k","footprint":"Resistor_SMD:R_0603_1608Metric","x_mm":80,
 "y_mm":80}],"nets":[{"name":"SIGNAL","nodes":[{"ref":"R1","pin":"1"}]}]}.
 Components may include "side":"TOP" or "BOTTOM" and pcb_x_mm/pcb_y_mm.
+For multi-unit symbols, include the component once, list every pin by its actual
+number, and optionally set "unit_positions":{"2":{"x_mm":100,"y_mm":80}}.
 An optional "board":{"width_mm":..,"height_mm":..} requires supplied dimensions.
 Every net must list its exact component pins. Include at least one net with two pins.
 Use installed or project-local KiCad symbol/footprint IDs. Choose simple names for nets and project.

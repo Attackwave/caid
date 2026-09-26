@@ -15,11 +15,13 @@ try:
     from .process import run_command
     from .project_brief import load_brief
     from .routing import preflight, validate_contract
+    from .project_rules import synchronize_project_rules
 except ImportError:
     from diagnostics import _cli_path
     from process import run_command
     from project_brief import load_brief
     from routing import preflight, validate_contract
+    from project_rules import synchronize_project_rules
 
 
 def _interpreter():
@@ -33,7 +35,7 @@ def _interpreter():
 def _project_copy(source, destination, board_name):
     destination.mkdir(parents=True, exist_ok=True)
     stem = Path(board_name).stem
-    for name in (board_name, stem + ".kicad_pro", stem + ".kicad_sch",
+    for name in (board_name, stem + ".kicad_pro", stem + ".kicad_sch", stem + ".kicad_dru",
                  "CAID-Projekt.json", "sym-lib-table", "fp-lib-table"):
         path = source / name
         if path.is_file():
@@ -45,7 +47,8 @@ def _project_copy(source, destination, board_name):
 
 def _drc(path, language, token):
     report = path.parent / (path.stem + ".caid-drc.json")
-    command = [_cli_path(language), "pcb", "drc", "--format", "json", "--output", str(report)]
+    command = [_cli_path(language), "pcb", "drc", "--format", "json", "--refill-zones",
+               "--output", str(report)]
     if (path.parent / (path.stem + ".kicad_sch")).is_file():
         command.append("--schematic-parity")
     command.append(str(path))
@@ -121,6 +124,8 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
     try:
         _project_copy(project, staging, board_name)
         working = staging / board_name
+        synchronize_project_rules(staging / (Path(board_name).stem + ".kicad_pro"),
+                                  contract, preserve_stricter=True)
         baseline = _drc(working, language, token)
         board_snapshot = _worker({"action": "inspect", "source": str(working)}, staging, token)
         brief = load_brief(project)
@@ -182,7 +187,7 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
             "contract": contract, "accepted": accepted,
             "skipped": skipped, "unconnected_before": len(baseline.get("unconnected_items", [])),
             "unconnected_after": len(report.get("unconnected_items", [])),
-            "remaining_scope": "nets with 2 to 32 pads and no existing copper"},
+            "remaining_scope": "nets with 2 to 32 pads and open copper connections"},
             ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         staging.replace(destination)
         return {"directory": str(destination), "accepted": accepted, "skipped": skipped,

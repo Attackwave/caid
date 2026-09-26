@@ -994,6 +994,10 @@ class ChatFrame(wx.Frame):
             source_brief = load_brief(board_snapshot["project_path"])
             if session is not None and not session.inherit_requirements:
                 source_brief = {"requirements": {}}
+            if json_path is None:
+                spec.pop("routing", None)
+                if session is not None and session.inherit_requirements and source_brief.get("routing"):
+                    spec["routing"] = source_brief["routing"]
             requirement_rows = review_spec(source_brief, spec,
                                            session.board_size if session is not None else None,
                                            session.board_size_mode if session is not None else "exact")
