@@ -43,6 +43,14 @@ class DesignPlanTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "PCB changed"):
                 apply_design_plan(object(), plan)
 
+    def test_increased_erc_errors_are_prominent_in_preview(self):
+        class ErrorStage(FakeStage):
+            erc_after = (2, 2)
+
+        with patch("caid_chat.design_plan.board_state", return_value=STATE):
+            plan = prepare_design_plan(object(), ErrorStage(), CURRENT, "de")
+        self.assertIn("Neue ERC-Fehler", describe_design_plan(plan, "de"))
+
 
 if __name__ == "__main__":
     unittest.main()

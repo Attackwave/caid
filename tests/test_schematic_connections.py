@@ -1,6 +1,7 @@
 import unittest
 
-from caid_chat.schematic_connections import rewrite_no_connect_markers, rewrite_pin_connections
+from caid_chat.schematic_connections import (rewrite_no_connect_markers,
+                                             rewrite_pin_connections, rewrite_pin_disconnections)
 
 
 SOURCE = '''(kicad_sch
@@ -28,6 +29,21 @@ class PinConnectionTests(unittest.TestCase):
             rewrite_no_connect_markers(result, [{"ref": "R1", "pin": "1"}])
         with self.assertRaisesRegex(ValueError, "Duplicate"):
             rewrite_no_connect_markers(SOURCE, [{"ref": "R1", "pin": "1"}] * 2)
+
+    def test_disconnects_only_one_exact_pin_label(self):
+        source = SOURCE.replace('(label "LINK" (at 60 55 0))',
+                                '(label "LINK" (at 60 55 0)) (label "LINK" (at 47.46 55 0))')
+        result, positions = rewrite_pin_disconnections(
+            source, [{"ref": "R1", "pin": "1", "net": "LINK"}])
+        self.assertEqual(positions, {(47.46, 55.0)})
+        self.assertEqual(result.count('(label "LINK"'), 1)
+        self.assertIn('(label "LINK" (at 60 55 0))', result)
+        with self.assertRaisesRegex(ValueError, "one exact local label"):
+            rewrite_pin_disconnections(SOURCE, [{"ref": "R1", "pin": "1", "net": "LINK"}])
+        with self.assertRaisesRegex(ValueError, "one exact local label"):
+            rewrite_pin_disconnections(source.replace('(label "LINK" (at 47.46 55 0))',
+                                                       '(label "LINK" (at 47.46 55 0)) (label "OTHER" (at 47.46 55 0))'),
+                                        [{"ref": "R1", "pin": "1", "net": "LINK"}])
 
     def test_rejects_ambiguous_or_unsupported_geometry(self):
         request = [{"ref": "R1", "pin": "1", "net": "LINK"}]

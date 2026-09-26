@@ -35,7 +35,7 @@ def _pin_location(library_form, instance, pin_number):
     unit_match = re.match(r'^\(unit\s+(\d+)\)', unit_text or "")
     at = _AT.match(_named_child(instance, "at") or "")
     if not unit_match or not at or float(at.group(3)) != 0 or _named_child(instance, "mirror"):
-        raise ValueError("Pin connection currently needs an unmirrored, unrotated symbol unit")
+        raise ValueError("Pin operation currently needs an unmirrored, unrotated symbol unit")
     unit_number = int(unit_match.group(1))
     matches = []
     for unit in _children(library_form):
@@ -145,6 +145,35 @@ def rewrite_pin_connections(text, requests):
         additions.append(f'  (label {json.dumps(net, ensure_ascii=False)} (at {x:g} {y:g} 0)'
                          f' (effects (font (size 1.27 1.27))) (uuid "{uuid.uuid4()}"))')
     return _append_forms(text, additions), positions
+
+
+def rewrite_pin_disconnections(text, requests):
+    """Remove one exact local label at each selected pin; CLI checks the delta."""
+    _validate_requests(text, requests, {"ref", "pin", "net"})
+    labels, libraries, placed, occupied = _schematic_context(text)
+    if any(item["net"] not in labels for item in requests):
+        raise ValueError("Existing local net label not found")
+    placed_labels = []
+    for start, end in _root_forms(text):
+        form = text[start:end]
+        match = re.match(r'^\(label\s+' + _QUOTED, form)
+        if not match:
+            continue
+        at = _AT.match(_named_child(form, "at") or "")
+        if at:
+            placed_labels.append((start, end, json.loads(match.group(1)),
+                                  (round(float(at.group(1)), 4), round(float(at.group(2)), 4))))
+    removals = []
+    positions = set()
+    for item, x, y in _pin_positions(requests, libraries, placed, occupied):
+        at_pin = [label for label in placed_labels if label[3] == (x, y)]
+        if len(at_pin) != 1 or at_pin[0][2] != item["net"]:
+            raise ValueError(f"Expected one exact local label at {item['ref']}.{item['pin']}")
+        removals.append(at_pin[0][:2])
+        positions.add((x, y))
+    for start, end in sorted(removals, reverse=True):
+        text = text[:start] + text[end:]
+    return text, positions
 
 
 def rewrite_no_connect_markers(text, requests):
