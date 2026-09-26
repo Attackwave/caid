@@ -7,7 +7,7 @@ from caid_chat import cli_providers
 
 
 REPLY = {"answer": "OK", "edit_schematic": False, "placements": [],
-         "tool_requests": [], "footprint_updates": []}
+         "tool_requests": [], "footprint_updates": [], "field_updates": [], "net_renames": []}
 
 
 class CliProviderTests(unittest.TestCase):

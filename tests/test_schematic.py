@@ -73,6 +73,25 @@ class SchematicApplyTests(unittest.TestCase):
                 apply_schematic_edit(staged, "de")
             self.assertEqual(source.read_text(encoding="utf-8"), "changed")
 
+    def test_rapid_successive_applies_keep_distinct_backups(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "design.kicad_sch"
+            source.write_text("first", encoding="utf-8")
+            backups = []
+            for old, new in (("first", "second"), ("second", "third")):
+                stage_dir = root / ("stage-" + new)
+                stage_dir.mkdir()
+                candidate = stage_dir / source.name
+                candidate.write_text(new, encoding="utf-8")
+                staged = StagedSchematic(source, candidate, stage_dir,
+                                         hashlib.sha256(old.encode()).hexdigest(),
+                                         "", "", (0, 0), (0, 0))
+                backups.append(apply_schematic_edit(staged))
+            self.assertNotEqual(*backups)
+            self.assertEqual([path.read_text() for path in backups], ["first", "second"])
+            self.assertEqual(source.read_text(), "third")
+
 
 if __name__ == "__main__":
     unittest.main()

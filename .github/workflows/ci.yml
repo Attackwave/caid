@@ -35,8 +35,7 @@ jobs:
           from zipfile import ZipFile
 
           expected = {
-              'caid-chat-kicad10-pcm.zip': {'metadata.json', 'plugins/plugin.json', 'plugins/main.py'},
-              'caid-chat-kicad10-launcher.zip': {'caid_launcher/__init__.py'},
+              'caid-chat-kicad10-pcm.zip': {'metadata.json', 'plugins/plugin.json', 'plugins/main.py', 'plugins/__init__.py'},
           }
           for name, required in expected.items():
               with ZipFile(Path('build') / name) as archive:

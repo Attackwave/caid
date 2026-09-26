@@ -9,6 +9,9 @@ def write_board(payload, destination):
     import pcbnew
 
     board = pcbnew.BOARD()
+    requested_layers = payload.get("copper_layers")
+    if requested_layers is not None:
+        board.SetCopperLayerCount(requested_layers)
     nets = {}
     for name in sorted(set(payload["connections"].values())):
         net = pcbnew.NETINFO_ITEM(board, name)
@@ -21,6 +24,9 @@ def write_board(payload, destination):
         footprint.SetFPIDAsString(item["footprint_id"])
         footprint.SetReference(item["ref"])
         footprint.SetValue(item["value"])
+        for field, value in item.get("fields", {}).items():
+            footprint.SetField(field, value)
+            footprint.GetField(field).SetVisible(False)
         x = item.get("pcb_x_mm", 35 + (index % 4) * 35)
         y = item.get("pcb_y_mm", 35 + (index // 4) * 35)
         point = pcbnew.VECTOR2I(pcbnew.FromMM(x), pcbnew.FromMM(y))
@@ -65,7 +71,8 @@ def write_board(payload, destination):
                           "height_mm": abs(pcbnew.ToMM(end.y - start.y))}
     print("CAID_BOARD_MANIFEST=" + json.dumps({"components": actual,
                                                 "outline": actual_outline,
-                                                "edge_items": len(edges)}))
+                                                "edge_items": len(edges),
+                                                "copper_layers": saved.GetCopperLayerCount()}))
 
 
 if __name__ == "__main__":

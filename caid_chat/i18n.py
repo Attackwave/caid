@@ -19,10 +19,22 @@ MESSAGES = {
     "action_help": ("Help and commands", "Hilfe und Befehle"),
     "action_reconnect": ("Reconnect to KiCad", "KiCad-Verbindung prüfen"),
     "action_project": ("Project brief", "Projekt-Steckbrief"),
+    "action_recovery": ("Recovery copies", "Arbeitskopien wiederherstellen"),
+    "recovery_no_project": ("Open a saved project first to inspect recovery copies.",
+                            "Öffne zuerst ein gespeichertes Projekt, um Arbeitskopien zu prüfen."),
+    "recovery_archived": ("Moved {count} abandoned copies to {directory}.",
+                          "{count} verwaiste Kopien nach {directory} verschoben."),
+    "recovery_failed": ("Could not inspect recovery copies: {error}",
+                        "Arbeitskopien konnten nicht geprüft werden: {error}"),
     "action_project_suggest": ("Suggest project details", "Projektangaben vorschlagen"),
     "brief_panel": ("Project brief", "Projekt-Steckbrief"),
     "kicad_connecting": ("Connecting to KiCad …", "Verbinde mit KiCad …"),
     "kicad_unavailable": ("KiCad API unavailable · retrying", "KiCad-API nicht erreichbar · erneuter Versuch folgt"),
+    "pcb_on_disk": ("PCB file on disk", "PCB-Datei auf Festplatte"),
+    "pcb_not_on_disk": ("PCB file not saved", "PCB-Datei nicht gespeichert"),
+    "proposal_discarded_disconnect": (
+        "KiCad connection was lost. The pending change was discarded; create a new preview after reconnecting.",
+        "Die KiCad-Verbindung wurde unterbrochen. Der offene Vorschlag wurde verworfen; erstelle nach dem Verbinden eine neue Vorschau."),
     "kicad_connection_error": ("KiCad API did not respond: {error}\nUse /reconnect to try again. If it still times out, save your work and fully restart KiCad.",
                                "KiCad-API hat nicht geantwortet: {error}\nMit /verbinden erneut prüfen. Falls es weiter scheitert, Arbeit sichern und KiCad vollständig neu starten."),
     "review_title": ("Review proposed change", "Änderung prüfen"),
@@ -95,10 +107,12 @@ MESSAGES = {
         "/sync previews pad net changes.\n\n"
         "/f8 opens KiCad's PCB update dialog.\n\n"
         "/sch task stages a schematic change.\n\n"
+        "Ask CAID to rename a local net in a single-sheet schematic; it verifies the complete KiCad netlist before Apply.\n\n"
         "/design task creates a separate draft project with schematic and unrouted PCB.\n\n"
         "/project shows the project brief, requirements and open questions.\n\n"
         "/project suggest proposes project brief changes from the conversation for review.\n\n"
         "/project history shows recent requirement changes.\n\n"
+        "/recovery shows interrupted project copies; /recovery save moves abandoned ones to CAID-Recovery.\n\n"
         "/project set Topic: Value records a user-provided requirement.\n\n"
         "/project assumption Topic: Value records an assumption.\n\n"
         "/project verified Topic: Value | Source records a cited claim for review.\n\n"
@@ -108,7 +122,7 @@ MESSAGES = {
         "/design cancel abandons the current design dialogue.\n\n"
         "/erc checks the saved schematic.\n\n"
         "/drc checks the saved PCB.\n\n"
-        "/route sets routing requirements; /route check runs the preflight; /route start routes eligible nets in a project copy.\n\n"
+        "/route sets routing requirements; /route check runs the preflight; /route start [count] attempts up to 100 eligible nets in a project copy.\n\n"
         "/new clears the conversation.\n\n"
         "In chat, you can ask CAID to inspect selected parts, nets, or footprints, "
         "assign an installed footprint, or propose placement.\n\n"
@@ -119,10 +133,12 @@ MESSAGES = {
         "/abgleich zeigt Pad-Netzänderungen.\n\n"
         "/f8 öffnet KiCads PCB-Aktualisierung.\n\n"
         "/sch Aufgabe bereitet eine Schaltplanänderung vor.\n\n"
+        "Bitte CAID im Chat um die Umbenennung eines lokalen Netzes in einer Einblatt-Schaltung; vor der Übernahme wird die vollständige KiCad-Netzliste geprüft.\n\n"
         "/entwurf Aufgabe erzeugt ein separates Entwurfsprojekt mit Schaltplan und ungerouteter Platine.\n\n"
         "/projekt zeigt Steckbrief, Anforderungen und offene Fragen.\n\n"
         "/projekt vorschlag schlägt Angaben aus dem Gespräch zur Prüfung vor.\n\n"
         "/projekt historie zeigt die letzten Änderungen.\n\n"
+        "/wiederherstellung zeigt unterbrochene Arbeitskopien; /wiederherstellung sichern verschiebt verwaiste Kopien nach CAID-Recovery.\n\n"
         "/projekt set Thema: Wert hält eine Nutzerangabe fest.\n\n"
         "/projekt annahme Thema: Wert hält eine Annahme fest.\n\n"
         "/projekt belegt Thema: Wert | Quelle hält eine belegte Angabe zur Prüfung fest.\n\n"
@@ -132,14 +148,15 @@ MESSAGES = {
         "/entwurf abbrechen beendet den laufenden Entwurfsdialog.\n\n"
         "/erc prüft den gespeicherten Schaltplan.\n\n"
         "/drc prüft die gespeicherte Platine.\n\n"
-        "/routing erfasst Routing-Vorgaben; /routing prüfen startet die Vorprüfung; /routing starten routet geeignete Netze auf einer Projektkopie.\n\n"
+        "/routing erfasst Routing-Vorgaben; /routing prüfen startet die Vorprüfung; /routing starten [Anzahl] versucht bis zu 100 geeignete Netze auf einer Projektkopie.\n\n"
         "/neu beginnt ein neues Gespräch.\n\n"
-        "Im Chat kannst du CAID nach ausgewählten Bauteilen, Netzen oder Footprints "
         "Im Chat kannst du CAID nach ausgewählten Bauteilen, Netzen oder Footprints "
         "fragen, einen installierten Footprint zuordnen oder eine Platzierung vorschlagen lassen.\n\n"
         "Schaltplanvorschläge zeigen ihre PCB-Auswirkung; nach Übernahme prüfst du "
         "die PCB-Aktualisierung mit F8."),
     "history_cleared": ("Chat history cleared.", "Gesprächsverlauf gelöscht."),
+    "route_pass_size_required": ("Provide one routing pass size.", "Gib genau eine Anzahl für den Routinglauf an."),
+    "route_pass_size_range": ("Routing pass size must be between 1 and 100.", "Die Anzahl pro Routinglauf muss zwischen 1 und 100 liegen."),
     "board_unknown": ("Could not identify the board: {error}", "Platine konnte nicht erkannt werden: {error}"),
     "board_unreadable": ("Could not read the board: {error}", "Platine konnte nicht gelesen werden: {error}"),
     "checking": ("{check} is running …", "{check} läuft …"),
@@ -185,6 +202,8 @@ MESSAGES = {
                       "Projekt-Steckbrief aktualisiert. Die Änderungshistorie steht in CAID-Projekt.json."),
     "brief_review_result": ("Project requirements: {checked} automatically matched; {unchecked} still need review. The full comparison is in the new project's CAID-Projekt.json and CAID-REVIEW.txt.",
                             "Projektvorgaben: {checked} automatisch abgeglichen; {unchecked} benötigen weitere Prüfung. Der vollständige Abgleich steht im neuen Projekt in CAID-Projekt.json und CAID-REVIEW.txt."),
+    "part_review_result": ("Part evidence: {parts} components have incomplete documentation; {questions} questions remain open. See CAID-REVIEW.json in the new project. Physical verification is required for every part.",
+                           "Bauteilnachweise: Bei {parts} Bauteilen fehlen Angaben; {questions} Fragen bleiben offen. Einzelheiten stehen im neuen Projekt in CAID-REVIEW.json. Jedes Bauteil muss physisch geprüft werden."),
     "brief_commands": ("AI proposal: /project suggest · History: /project history\nUser input: /project set Topic: Value · Assumption: /project assumption Topic: Value\nCited claim: /project verified Topic: Value | Source\nMaximum size: /project size max 80 x 25 mm · Exact size: /project size exact 80 x 25 mm · Side: /project side U1 TOP\nRemove: /project delete Topic · Open: /project open Question · Resolve: /project resolved Question",
                        "KI-Vorschlag: /projekt vorschlag · Historie: /projekt historie\nNutzerangabe: /projekt set Thema: Wert · Annahme: /projekt annahme Thema: Wert\nBelegte Angabe: /projekt belegt Thema: Wert | Quelle\nMaximalgröße: /projekt größe max 80 x 25 mm · Exakte Größe: /projekt größe exakt 80 x 25 mm · Seite: /projekt seite U1 TOP\nEntfernen: /projekt löschen Thema · Offen: /projekt offen Frage · Geklärt: /projekt geklärt Frage"),
     "design_created": ("New draft: {directory}\n\n{components} components, {nets} nets. KiCad ERC: {erc_errors} errors, {erc_warnings} warnings. DRC: {drc_errors} errors, {drc_warnings} warnings; schematic parity: 0 differences. Open the new KiCad project and review schematic and PCB. The footprints and pad nets are placed; traces are not routed.",

@@ -18,14 +18,16 @@ try:
     from .footprints import find_footprint
     from .i18n import localized
     from .process import run_command
-    from .schematic_fields import rewrite_footprint_fields
+    from .schematic_fields import (rewrite_footprint_fields, rewrite_local_net_labels,
+                                   rewrite_symbol_fields)
     from .schematic_fields import _root_forms
 except ImportError:  # KiCad starts main.py directly from the plugin directory.
     from diagnostics import _cli_path
     from footprints import find_footprint
     from i18n import localized
     from process import run_command
-    from schematic_fields import rewrite_footprint_fields
+    from schematic_fields import (rewrite_footprint_fields, rewrite_local_net_labels,
+                                  rewrite_symbol_fields)
     from schematic_fields import _root_forms
 
 
@@ -78,7 +80,7 @@ def _run_cli_netlist(schematic, output, language="en", token=None):
     return ElementTree.parse(output).getroot()
 
 
-def _netlist_snapshot(root, path):
+def _netlist_snapshot(root, path, *, full=False):
     source = path.read_bytes()
     notes, note_count, notes_truncated = _schematic_notes(source.decode("utf-8-sig"))
     components = []
@@ -100,9 +102,9 @@ def _netlist_snapshot(root, path):
         "saved_file_sha256": hashlib.sha256(source).hexdigest(),
         "component_count": len(components),
         "net_count": len(nets),
-        "components": components[:200],
-        "nets": nets[:300],
-        "truncated": len(components) > 200 or len(nets) > 300,
+        "components": components if full else components[:200],
+        "nets": nets if full else nets[:300],
+        "truncated": False if full else len(components) > 200 or len(nets) > 300,
         "notes": notes,
         "note_count": note_count,
         "notes_truncated": notes_truncated,
@@ -164,6 +166,7 @@ class StagedSchematic:
     erc_before: tuple[int, int]
     erc_after: tuple[int, int]
     candidate_snapshot: dict | None = None
+    before_snapshot: dict | None = None
 
     def cleanup(self):
         shutil.rmtree(self.stage_dir, ignore_errors=True)
@@ -324,6 +327,116 @@ def stage_footprint_updates(board_snapshot, updates, language="en", token=None, 
         raise
 
 
+def stage_field_updates(board_snapshot, updates, language="en", token=None, standard_root=None):
+    """Stage bounded Value/Footprint updates from any model on an isolated copy."""
+    source = schematic_path(board_snapshot, language)
+    if not 1 <= len(updates) <= 20:
+        raise ValueError("Provide 1 to 20 schematic field updates")
+    desired = {}
+    for entry in updates:
+        if not isinstance(entry, dict) or set(entry) != {"ref", "field", "value"}:
+            raise ValueError("Invalid schematic field update")
+        key = (entry["ref"], entry["field"])
+        if key in desired:
+            raise ValueError(f"Duplicate schematic field update: {key[0]}.{key[1]}")
+        desired[key] = entry["value"]
+    for (ref, field), value in desired.items():
+        if field == "Footprint" and find_footprint(source.parent, value, standard_root) is None:
+            raise ValueError(f"Footprint {value} is not installed for {ref}")
+    original = source.read_bytes()
+    updated_text, previous = rewrite_symbol_fields(original.decode("utf-8-sig"), desired)
+    stage_dir = Path(tempfile.mkdtemp(prefix="caid-fields-"))
+    candidate = stage_dir / source.name
+    try:
+        candidate.write_text(updated_text, encoding="utf-8")
+        _copy_project_support(source, stage_dir)
+        with tempfile.TemporaryDirectory(prefix="caid-field-check-") as check_dir:
+            before_root = _run_cli_netlist(source, Path(check_dir) / "before.xml", language, token)
+            candidate_root = _run_cli_netlist(candidate, Path(check_dir) / "after.xml", language, token)
+            before_snapshot = _netlist_snapshot(before_root, source, full=True)
+            candidate_snapshot = _netlist_snapshot(candidate_root, candidate, full=True)
+            before_erc = _erc_counts(source, Path(check_dir) / "before.json", language, token)
+            after_erc = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+        def topology(root):
+            components = {comp.get("ref", "") for comp in root.findall("./components/comp")}
+            nets = {net.get("name", ""): sorted((node.get("ref", ""), node.get("pin", ""))
+                    for node in net.findall("node")) for net in root.findall("./nets/net")}
+            return components, nets
+        if topology(before_root) != topology(candidate_root):
+            raise RuntimeError("KiCad netlist topology changed during a field-only update")
+        by_ref = {comp.get("ref", ""): comp for comp in candidate_root.findall("./components/comp")}
+        for (ref, field), value in desired.items():
+            actual = by_ref[ref].findtext(field.casefold(), default="") if ref in by_ref else None
+            if actual != value:
+                raise RuntimeError(f"KiCad netlist does not contain {ref}.{field} = {value}")
+        diff = "".join(difflib.unified_diff(
+            original.decode("utf-8-sig").splitlines(keepends=True), updated_text.splitlines(keepends=True),
+            fromfile=source.name + " (before)", tofile=source.name + " (proposal)"))
+        (stage_dir / "change.diff").write_text(diff, encoding="utf-8")
+        details = ", ".join(f"{ref}.{field}: {previous[(ref, field)] or '∅'} → {value}"
+                            for ref, field in desired)
+        return StagedSchematic(source, candidate, stage_dir, hashlib.sha256(original).hexdigest(),
+                               diff, details, before_erc, after_erc, candidate_snapshot, before_snapshot)
+    except Exception:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        raise
+
+
+def stage_net_renames(board_snapshot, renames, language="en", token=None):
+    """Stage exact local-label renames and verify every resulting KiCad net."""
+    source = schematic_path(board_snapshot, language)
+    if not isinstance(renames, list) or not 1 <= len(renames) <= 10 or any(
+            not isinstance(item, dict) or set(item) != {"from", "to"} for item in renames):
+        raise ValueError("Provide 1 to 10 local net renames")
+    desired = {}
+    for item in renames:
+        if item["from"] in desired:
+            raise ValueError("Duplicate source net: " + str(item["from"]))
+        desired[item["from"]] = item["to"]
+    original = source.read_bytes()
+    updated_text, counts = rewrite_local_net_labels(original.decode("utf-8-sig"), desired)
+    stage_dir = Path(tempfile.mkdtemp(prefix="caid-nets-"))
+    candidate = stage_dir / source.name
+    try:
+        candidate.write_text(updated_text, encoding="utf-8")
+        _copy_project_support(source, stage_dir)
+        with tempfile.TemporaryDirectory(prefix="caid-net-check-") as check_dir:
+            before_root = _run_cli_netlist(source, Path(check_dir) / "before.xml", language, token)
+            after_root = _run_cli_netlist(candidate, Path(check_dir) / "after.xml", language, token)
+            before_snapshot = _netlist_snapshot(before_root, source, full=True)
+            after_snapshot = _netlist_snapshot(after_root, candidate, full=True)
+            before_erc = _erc_counts(source, Path(check_dir) / "before.json", language, token)
+            after_erc = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+        if before_snapshot["components"] != after_snapshot["components"]:
+            raise RuntimeError("KiCad components changed during a net rename")
+        def net_map(root):
+            return {net.get("name", ""): sorted((node.get("ref", ""), node.get("pin", ""))
+                    for node in net.findall("node")) for net in root.findall("./nets/net")}
+        before_nets = net_map(before_root)
+        after_nets = net_map(after_root)
+        old_names = {"/" + old for old in desired}
+        new_names = {"/" + new for new in desired.values()}
+        if not old_names <= before_nets.keys() or new_names & before_nets.keys():
+            raise ValueError("Source net missing or target net already exists in KiCad netlist")
+        expected = {"/" + desired[name[1:]] if name in old_names else name: nodes
+                    for name, nodes in before_nets.items()}
+        if after_nets != expected:
+            raise RuntimeError("KiCad netlist changed beyond the requested net names")
+        diff = "".join(difflib.unified_diff(
+            original.decode("utf-8-sig").splitlines(keepends=True),
+            updated_text.splitlines(keepends=True),
+            fromfile=source.name + " (before)", tofile=source.name + " (proposal)"))
+        (stage_dir / "change.diff").write_text(diff, encoding="utf-8")
+        details = ", ".join(f"{old} → {new} ({counts[old]} labels)"
+                            for old, new in desired.items())
+        return StagedSchematic(source, candidate, stage_dir,
+                               hashlib.sha256(original).hexdigest(), diff, details,
+                               before_erc, after_erc, after_snapshot, before_snapshot)
+    except Exception:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        raise
+
+
 def apply_schematic_edit(staged, language="en"):
     """Back up and atomically replace a closed, unchanged schematic file."""
     source = staged.original
@@ -332,18 +445,26 @@ def apply_schematic_edit(staged, language="en"):
     lock = source.with_name("~" + source.name + ".lck")
     if lock.exists():
         raise RuntimeError(localized(language, "The schematic is open in KiCad. Close the schematic editor and retry.", "Der Schaltplan ist in KiCad geöffnet. Schließe den Schaltplan-Editor und versuche es erneut."))
-    if hashlib.sha256(source.read_bytes()).hexdigest() != staged.original_hash:
+    original = source.read_bytes()
+    if hashlib.sha256(original).hexdigest() != staged.original_hash:
         raise RuntimeError(localized(language, "The schematic changed since the preview. Create a new proposal.", "Der Schaltplan hat sich seit der Vorschau geändert. Bitte den Entwurf neu erzeugen."))
     backup = source.with_name(source.stem + ".caid-backup-" +
-                              datetime.now().strftime("%Y%m%d-%H%M%S") +
+                              datetime.now().strftime("%Y%m%d-%H%M%S-%f") +
                               source.suffix)
-    shutil.copy2(source, backup)
+    with backup.open("xb") as stream:
+        stream.write(original)
+        stream.flush()
+        os.fsync(stream.fileno())
     with tempfile.NamedTemporaryFile(dir=source.parent, prefix=".caid-", suffix=source.suffix, delete=False) as stream:
         temp_path = Path(stream.name)
         stream.write(staged.candidate.read_bytes())
         stream.flush()
         os.fsync(stream.fileno())
     try:
+        if lock.exists() or source.read_bytes() != original:
+            raise RuntimeError(localized(language,
+                                         "The schematic changed or opened while applying. Create a new proposal.",
+                                         "Der Schaltplan wurde während der Übernahme geöffnet oder geändert. Bitte neu vorschlagen lassen."))
         os.replace(temp_path, source)
     except Exception:
         temp_path.unlink(missing_ok=True)

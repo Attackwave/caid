@@ -1,6 +1,7 @@
 """Cancelable subprocesses without visible console windows on Windows."""
 
 import os
+import signal
 import subprocess
 import threading
 import time
@@ -38,10 +39,37 @@ class CancelToken:
                 self._kill(self._process)
 
     @staticmethod
-    def _kill(process):
+    def _kill(process, force_group=False):
+        if process.poll() is not None and not force_group:
+            return
+        try:
+            if os.name == "nt":
+                subprocess.Popen(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            pass
         try:
             process.kill()
         except OSError:
+            pass
+
+
+def _drain_stopped(process):
+    """Never wait indefinitely for descendants holding the output pipes open."""
+    try:
+        process.communicate(timeout=1)
+    except subprocess.TimeoutExpired:
+        CancelToken._kill(process, force_group=True)
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
             pass
 
 
@@ -49,7 +77,8 @@ def run_command(command, *, input=None, timeout=None, token=None):
     """Return CompletedProcess; cancellation kills the running child process."""
     if token:
         token.check()
-    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    flags = (subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+             if os.name == "nt" else 0)
     startupinfo = None
     if os.name == "nt":
         startupinfo = subprocess.STARTUPINFO()
@@ -59,7 +88,7 @@ def run_command(command, *, input=None, timeout=None, token=None):
         command, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         encoding="utf-8", errors="replace", creationflags=flags,
-        startupinfo=startupinfo,
+        startupinfo=startupinfo, start_new_session=os.name != "nt",
     )
     if token:
         token.attach(process)
@@ -72,7 +101,7 @@ def run_command(command, *, input=None, timeout=None, token=None):
             remaining = deadline - time.monotonic() if deadline is not None else None
             if remaining is not None and remaining <= 0:
                 CancelToken._kill(process)
-                process.communicate()
+                _drain_stopped(process)
                 raise subprocess.TimeoutExpired(command, timeout)
             try:
                 stdout, stderr = process.communicate(
@@ -88,6 +117,6 @@ def run_command(command, *, input=None, timeout=None, token=None):
     finally:
         if process.poll() is None:
             CancelToken._kill(process)
-            process.communicate()
+            _drain_stopped(process)
         if token:
             token.detach(process)
