@@ -1,6 +1,8 @@
 import unittest
 
-from caid_chat.board_ops import describe_placements, geometry_warnings, mark_footprints, repair_placements, validate_placements
+from caid_chat.board_ops import (apply_placements, board_matches_snapshot, describe_placements, geometry_warnings,
+                                 mark_footprints, repair_placements, snapshot,
+                                 validate_placements)
 
 
 BOARD = {
@@ -18,6 +20,50 @@ BOARD = {
 
 
 class PlacementTests(unittest.TestCase):
+    def test_apply_accepts_context_metadata_but_rejects_hidden_board_change(self):
+        from types import SimpleNamespace
+
+        class Board:
+            name = "demo.kicad_pcb"
+            document = SimpleNamespace(project=SimpleNamespace(path="/tmp/demo"))
+
+            def __init__(self):
+                self.contents = "(kicad_pcb (segment first))"
+
+            def get_footprints(self):
+                return []
+
+            def get_tracks(self):
+                return [SimpleNamespace(layer=1)]
+
+            def get_vias(self):
+                return []
+
+            def get_nets(self):
+                return []
+
+            def get_shapes(self):
+                return []
+
+            def get_copper_layer_count(self):
+                return 2
+
+            def get_layer_name(self, _layer):
+                return "F.Cu"
+
+            def get_as_string(self):
+                return self.contents
+
+        board = Board()
+        original = snapshot(board)
+        original["project_brief"] = {"requirements": {"size": "80x30"}}
+        self.assertTrue(board_matches_snapshot(board, original))
+        board.contents = "(kicad_pcb (segment moved))"
+        self.assertEqual(original["counts"], snapshot(board)["counts"])
+        self.assertFalse(board_matches_snapshot(board, original))
+        with self.assertRaisesRegex(ValueError, "changed since the preview"):
+            apply_placements(board, [], original)
+
     def test_mark_footprints_uses_editor_selection(self):
         from types import SimpleNamespace
         fp = SimpleNamespace(reference_field=SimpleNamespace(text=SimpleNamespace(value="U1")))
