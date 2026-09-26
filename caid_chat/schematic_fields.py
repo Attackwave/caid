@@ -1,11 +1,15 @@
 """Small, bounded edits to existing top-level KiCad schematic symbol properties."""
 
+import json
 import re
 
 
 _REFERENCE = re.compile(r'\(property\s+"Reference"\s+"([^"\\]+)"')
 _FOOTPRINT = re.compile(r'\(property\s+"Footprint"\s+"([^"\\]*)"')
+_FIELD_VALUE = re.compile(r'\(property\s+"(Value|Footprint)"\s+("(?:\\.|[^"\\])*")')
 _IDENTIFIER = re.compile(r'^[A-Za-z0-9_.+\-]+:[A-Za-z0-9_.+\-]+$')
+_LOCAL_NET_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_+.-]{0,63}$')
+_LABEL_VALUE = re.compile(r'^\(label\s+("(?:\\.|[^"\\])*")')
 
 
 def _root_forms(text):
@@ -40,41 +44,97 @@ def _root_forms(text):
         raise ValueError("Unbalanced schematic expression")
 
 
-def rewrite_footprint_fields(text, updates):
-    """Replace existing Footprint fields by reference, preserving all other bytes."""
+def rewrite_symbol_fields(text, updates):
+    """Replace placed Value/Footprint fields, including all units of one reference."""
     if not text.lstrip().startswith("(kicad_sch"):
         raise ValueError("Not a KiCad schematic")
     if not updates or len(updates) > 20 or any(
-            not re.fullmatch(r"[A-Za-z]{1,4}[0-9]+", ref) or
-            not _IDENTIFIER.fullmatch(identifier)
-            for ref, identifier in updates.items()):
-        raise ValueError("Invalid footprint update")
+            not isinstance(key, tuple) or len(key) != 2 or
+            not re.fullmatch(r"[A-Za-z]{1,4}[0-9]+", key[0]) or
+            key[1] not in {"Value", "Footprint"} or
+            not isinstance(value, str) or
+            (not _IDENTIFIER.fullmatch(value) if key[1] == "Footprint" else
+             not 1 <= len(value) <= 100 or any(ord(char) < 32 for char in value))
+            for key, value in updates.items()):
+        raise ValueError("Invalid schematic field update")
     replacements = []
-    found = {ref: 0 for ref in updates}
+    found = {key: 0 for key in updates}
     previous = {}
     for start, end in _root_forms(text):
         form = text[start:end]
         if not re.match(r'\(symbol\s', form):
             continue
         reference = _REFERENCE.search(form)
-        if not reference or reference.group(1) not in updates:
+        if not reference:
             continue
         ref = reference.group(1)
-        field = _FOOTPRINT.search(form)
-        if field is None:
-            raise ValueError(f"{ref} has no existing Footprint property")
-        old = field.group(1)
-        if ref in previous and previous[ref] != old:
-            raise ValueError(f"{ref} has inconsistent Footprint properties")
-        previous[ref] = old
-        found[ref] += 1
-        if old != updates[ref]:
-            replacements.append((start + field.start(1), start + field.end(1), updates[ref]))
-    missing = sorted(ref for ref, count in found.items() if count == 0)
+        relevant = {field: value for (target, field), value in updates.items() if target == ref}
+        if not relevant:
+            continue
+        fields = {match.group(1): match for match in _FIELD_VALUE.finditer(form)}
+        for field_name, value in relevant.items():
+            field = fields.get(field_name)
+            if field is None:
+                raise ValueError(f"{ref} has no existing {field_name} property")
+            old = json.loads(field.group(2))
+            key = (ref, field_name)
+            if key in previous and previous[key] != old:
+                raise ValueError(f"{ref} has inconsistent {field_name} properties")
+            previous[key] = old
+            found[key] += 1
+            if old != value:
+                replacements.append((start + field.start(2), start + field.end(2),
+                                     json.dumps(value, ensure_ascii=False)))
+    missing = sorted(key for key, count in found.items() if count == 0)
     if missing:
-        raise ValueError("Symbol reference not found: " + ", ".join(missing))
+        raise ValueError("Symbol field not found: " + ", ".join(f"{ref}.{field}" for ref, field in missing))
     if not replacements:
-        raise ValueError("Footprint assignment is already current")
+        raise ValueError("Schematic field assignment is already current")
     for start, end, value in reversed(replacements):
         text = text[:start] + value + text[end:]
     return text, previous
+
+
+def rewrite_footprint_fields(text, updates):
+    """Compatibility wrapper for footprint-only updates."""
+    updated, previous = rewrite_symbol_fields(text, {(ref, "Footprint"): value
+                                                     for ref, value in updates.items()})
+    return updated, {ref: previous[(ref, "Footprint")] for ref in updates}
+
+
+def rewrite_local_net_labels(text, renames):
+    """Rename exact root-sheet local labels without touching notes or library text."""
+    if not text.lstrip().startswith("(kicad_sch"):
+        raise ValueError("Not a KiCad schematic")
+    if not isinstance(renames, dict) or not 1 <= len(renames) <= 10 or any(
+            not isinstance(old, str) or not isinstance(new, str) or
+            not _LOCAL_NET_NAME.fullmatch(old) or not _LOCAL_NET_NAME.fullmatch(new) or
+            old == new for old, new in renames.items()):
+        raise ValueError("Invalid local net rename")
+    if set(renames) & set(renames.values()) or len(set(renames.values())) != len(renames):
+        raise ValueError("Chained or duplicate net names are not supported")
+    replacements = []
+    found = {old: 0 for old in renames}
+    existing = set()
+    for start, end in _root_forms(text):
+        form = text[start:end]
+        if re.match(r'^\(sheet\s', form):
+            raise ValueError("Local net renaming currently supports single-sheet schematics only")
+        match = _LABEL_VALUE.match(form)
+        if match is None:
+            continue
+        name = json.loads(match.group(1))
+        existing.add(name)
+        if name in renames:
+            found[name] += 1
+            replacements.append((start + match.start(1), start + match.end(1),
+                                 json.dumps(renames[name], ensure_ascii=False)))
+    collision = set(renames.values()) & existing
+    if collision:
+        raise ValueError("Target net label already exists: " + ", ".join(sorted(collision)))
+    missing = [old for old, count in found.items() if count == 0]
+    if missing:
+        raise ValueError("Local net label not found: " + ", ".join(sorted(missing)))
+    for start, end, value in reversed(replacements):
+        text = text[:start] + value + text[end:]
+    return text, found

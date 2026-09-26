@@ -45,6 +45,8 @@ def prepare_design_plan(board, staged, current_schematic, language="en"):
     if current_schematic.get("saved_file_sha256") != staged.original_hash:
         raise ValueError(localized(language, "The saved schematic changed while preparing the proposal.",
                                    "Der gespeicherte Schaltplan hat sich während der Vorschau geändert."))
+    if getattr(staged, "before_snapshot", None) is not None:
+        current_schematic = staged.before_snapshot
     state = board_state(board)
     before = plan_sync(state, current_schematic, language)
     after = plan_sync(state, staged.candidate_snapshot, language)

@@ -13,6 +13,7 @@ from kipy.proto.common import ApiStatusCode
 from board_ops import apply_placements, describe_placements, geometry_warnings, mark_footprints, repair_placements, snapshot, validate_placements
 from brief_ai import BriefProposal, ask_brief_proposal
 from context import EditorContext, capability_summary
+from context_probe import probe_context
 from circuit_design import stage_new_design
 from design_ai import ask_design
 from design_session import DesignSession, board_size_mode, parse_board_size
@@ -32,6 +33,7 @@ from project_brief import (add_open_question, apply_brief_proposal, brief_hash, 
                            set_routing,
                            history_summary as brief_history_summary,
                            compact_summary as brief_compact_summary)
+from project_recovery import archive_abandoned_stages, describe_stages
 from project_status import overview as project_overview
 from requirement_review import mismatches, review_spec
 from route_project import read_saved_board_snapshot, route_project
@@ -39,7 +41,8 @@ from provider_settings import load_settings, save_settings
 from routing import default_contract, describe as describe_routing, set_layers, set_limits
 from providers import CLI_PROVIDERS, DEFAULT_MODELS, DEFAULT_URLS, LOCAL_PROVIDERS, PROVIDERS, ask_provider, is_loopback_url, list_local_models, probe_model
 from project_tools import execute_read_tool, tool_label
-from schematic import read_schematic, stage_footprint_updates, stage_schematic_edit
+from schematic import (read_schematic, stage_field_updates, stage_footprint_updates,
+                       stage_net_renames, stage_schematic_edit)
 
 
 class ChatFrame(wx.Frame):
@@ -341,22 +344,10 @@ class ChatFrame(wx.Frame):
 
     def _probe_context(self):
         try:
-            # The recurring probe needs its own request socket. Sharing kipy's
-            # request/reply client with an AI worker can interleave responses.
-            client = self._kicad
-            if type(client).__module__.startswith("kipy."):
-                from kipy import KiCad
-                client = KiCad()
-            board = client.get_board()
-            document = str(board.name) if board and board.name else None
-            project_path = str(board.document.project.path) if board else None
-            try:
-                version = client.get_version()
-                version_name, major = str(version.full_version), int(version.major)
-            except Exception:
-                version_name, major = "unknown", None
-            context = EditorContext(version_name, major, "pcb", document)
-            wx.CallAfter(self._context_result, context, project_path, "")
+            result = probe_context()
+            context = EditorContext(result["version"], result["major"], "pcb",
+                                    result["document"], result.get("saved_file_exists"))
+            wx.CallAfter(self._context_result, context, result["project_path"], "")
         except Exception as exc:
             wx.CallAfter(self._context_result, None, None, str(exc))
 
@@ -364,21 +355,33 @@ class ChatFrame(wx.Frame):
         if self._closed:
             return
         self._context_probe_running = False
+        client = None
+        if not error:
+            try:
+                from kipy import KiCad
+                client = KiCad()
+            except Exception as exc:
+                error = str(exc)
         if error:
+            if self._connection_ok and self._pending is not None:
+                self._clear_proposal()
+                self._append("CAID", self._t("proposal_discarded_disconnect"))
             self._connection_ok = False
             self._connection_error = connection_detail(error, self._language)
             self._next_context_probe = time.monotonic() + 10
             label = self._t("kicad_unavailable")
-            if self._hinted_board_name:
-                label = f"{self._hinted_board_name}  ·  {label}"
+            previous = self._hinted_board_name or self._context.document
+            if previous:
+                label = f"{os.path.basename(previous)}  ·  {label}"
             self.context_label.SetLabel(label)
             if not self._project_path:
                 self.brief_pane.SetLabel(self._t("brief_unavailable", error=error[:100]))
             self.context_label.Wrap(max(300, self.GetClientSize().width - 32))
             return
+        self._kicad = client
         self._connection_ok = True
         self._connection_error = ""
-        self._next_context_probe = 0.0
+        self._next_context_probe = time.monotonic() + 8
         project_changed = self._project_path is not None and self._project_path != project_path
         if updated != self._context or project_changed:
             old_document = self._context.document
@@ -392,7 +395,10 @@ class ChatFrame(wx.Frame):
         self._project_path = project_path
         self._hinted_board_name = None
         name = os.path.basename(updated.document) if updated.document else self._t("unsaved_board")
-        self.context_label.SetLabel(f"{name}  ·  KiCad {updated.version}")
+        disk_state = (self._t("pcb_on_disk") if updated.saved_file_exists is True else
+                      self._t("pcb_not_on_disk") if updated.saved_file_exists is False else "")
+        self.context_label.SetLabel(f"{name}  ·  KiCad {updated.version}" +
+                                    (f"  ·  {disk_state}" if disk_state else ""))
         self.context_label.Wrap(max(300, self.GetClientSize().width - 32))
         self._refresh_project_brief()
         if self._design_session and not self._resume_announced:
@@ -548,6 +554,7 @@ class ChatFrame(wx.Frame):
             (self._t("action_board"), "/platine"),
             (self._t("action_schematic"), "/schaltplan"),
             (self._t("action_project"), "/projekt"),
+            (self._t("action_recovery"), "/wiederherstellung"),
             (self._t("action_project_suggest"), "/projekt vorschlag"),
             (("Routing-Vorprüfung" if self._language == "de" else "Routing preflight"), "/routing prüfen"),
             (("Routing-Kopie erzeugen" if self._language == "de" else "Create routed copy"), "/routing starten"),
@@ -581,7 +588,9 @@ class ChatFrame(wx.Frame):
         self._append(self._t("you"), message)
         command = message.casefold()
         if command in ("/status", "status"):
-            status = capability_summary(self._context, self._language)
+            live_context = self._context if self._connection_ok else EditorContext(
+                "unknown", None, "pcb", None)
+            status = capability_summary(live_context, self._language)
             if self._project_path:
                 try:
                     status += "\n\n" + project_overview(
@@ -620,6 +629,20 @@ class ChatFrame(wx.Frame):
             self._refresh_context()
             self._append("CAID", self._t("kicad_connecting"))
             return
+        if command in ("/wiederherstellung", "/recovery",
+                       "/wiederherstellung sichern", "/recovery save"):
+            if not self._project_path:
+                self._append("CAID", self._t("recovery_no_project"))
+                return
+            try:
+                if command.endswith(("sichern", "save")):
+                    moved = archive_abandoned_stages(self._project_path)
+                    self._append("CAID", self._t("recovery_archived", count=len(moved),
+                                                 directory=Path(self._project_path) / "CAID-Recovery"))
+                self._append("CAID", describe_stages(self._project_path, self._language))
+            except (OSError, ValueError) as exc:
+                self._append("CAID", self._t("recovery_failed", error=exc))
+            return
         if not self._connection_ok and command in ("/projekt", "/project",
                                                    "/projekt historie", "/project history"):
             if not self._project_path:
@@ -642,7 +665,8 @@ class ChatFrame(wx.Frame):
         if command in ("/routing", "/route", "/routing prüfen", "/route check",
                        "/routing starten", "/route start") or command.startswith((
                            "/routing lagen ", "/route layers ", "/routing regeln ",
-                           "/route rules ", "/routing netz ", "/route net ")):
+                           "/route rules ", "/routing netz ", "/route net ",
+                           "/routing starten ", "/route start ")):
             try:
                 board = self._kicad.get_board()
                 project_path = str(board.document.project.path)
@@ -657,14 +681,25 @@ class ChatFrame(wx.Frame):
                     set_routing(project_path, contract)
                     self._refresh_project_brief()
                 if command in ("/routing starten", "/route start") or command.startswith((
-                        "/routing netz ", "/route net ")):
+                        "/routing netz ", "/route net ", "/routing starten ", "/route start ")):
                     net_name = (message.split(" ", 2)[2].strip() if command.startswith((
                         "/routing netz ", "/route net ")) else None)
                     if net_name == "":
                         raise ValueError("Net name is empty")
+                    max_nets = 20
+                    if command.startswith(("/routing starten ", "/route start ")):
+                        parts = message.split()
+                        if len(parts) != 3:
+                            raise ValueError(self._t("route_pass_size_required"))
+                        try:
+                            max_nets = int(parts[2])
+                        except ValueError as exc:
+                            raise ValueError(self._t("route_pass_size_range")) from exc
+                    if not 1 <= max_nets <= 100:
+                        raise ValueError(self._t("route_pass_size_range"))
                     token = self._start_work("Routing …")
                     threading.Thread(target=self._routing_run,
-                                     args=(project_path, board.name, contract, net_name, token),
+                                     args=(project_path, board.name, contract, net_name, max_nets, token),
                                      daemon=True).start()
                     return
                 if command in ("/routing prüfen", "/route check"):
@@ -682,8 +717,8 @@ class ChatFrame(wx.Frame):
                                                          "mode": brief.get("pcb_size_mode") or "maximum"}
                                                         if isinstance(target_size, dict) else None)
                     self._append("CAID", describe_routing(contract, route_snapshot, language=self._language) +
-                                 "\n\n" + ("/routing lagen 1|2|4|…|32\n/routing regeln Breite Abstand Randabstand (1 Lage)\n/routing regeln Breite Abstand ViaDurchmesser ViaBohrung Randabstand (2+ Lagen)\n/routing prüfen\n/routing starten (bis zu 20 Netze auf einer Kopie)\n/routing netz NETZNAME (ein Netz)" if self._language == "de" else
-                                              "/route layers 1|2|4|…|32\n/route rules width clearance edge_clearance (1 layer)\n/route rules width clearance via_diameter via_drill edge_clearance (2+ layers)\n/route check\n/route start (up to 20 nets in a copy)\n/route net NET_NAME (one net)"))
+                                 "\n\n" + ("/routing lagen 1|2|4|…|32\n/routing regeln Breite Abstand Randabstand (1 Lage)\n/routing regeln Breite Abstand ViaDurchmesser ViaBohrung Randabstand (2+ Lagen)\n/routing prüfen\n/routing starten [Anzahl] (Standard 20, maximal 100 Netze pro Kopie)\n/routing netz NETZNAME (ein Netz)" if self._language == "de" else
+                                              "/route layers 1|2|4|…|32\n/route rules width clearance edge_clearance (1 layer)\n/route rules width clearance via_diameter via_drill edge_clearance (2+ layers)\n/route check\n/route start [count] (default 20, up to 100 nets per copy)\n/route net NET_NAME (one net)"))
             except (ValueError, OSError, RuntimeError) as exc:
                 self._append("CAID", str(exc))
             return
@@ -927,9 +962,28 @@ class ChatFrame(wx.Frame):
                     if "result" in cache[key] and label not in inspected:
                         inspected.append(label)
             token.check()
-            if (result["footprint_updates"] or result["edit_schematic"]) and "components" not in schematic_snapshot:
+            if (result["footprint_updates"] or result["field_updates"] or result["net_renames"] or
+                    result["edit_schematic"]) and "components" not in schematic_snapshot:
                 raise RuntimeError(self._t("schematic_required", error=schematic_snapshot.get("unavailable", "")))
-            if result["footprint_updates"]:
+            if result["net_renames"]:
+                wx.CallAfter(self._set_activity, token, self._t("checking_copy"))
+                staged = stage_net_renames(board_snapshot, result["net_renames"], self._language, token)
+                try:
+                    plan = prepare_design_plan(self._kicad.get_board(), staged, schematic_snapshot, self._language)
+                except Exception:
+                    staged.cleanup()
+                    raise
+                wx.CallAfter(self._schematic_result, plan, messages, result["answer"], token, inspected)
+            elif result["field_updates"]:
+                wx.CallAfter(self._set_activity, token, self._t("checking_copy"))
+                staged = stage_field_updates(board_snapshot, result["field_updates"], self._language, token)
+                try:
+                    plan = prepare_design_plan(self._kicad.get_board(), staged, schematic_snapshot, self._language)
+                except Exception:
+                    staged.cleanup()
+                    raise
+                wx.CallAfter(self._schematic_result, plan, messages, result["answer"], token, inspected)
+            elif result["footprint_updates"]:
                 wx.CallAfter(self._set_activity, token, self._t("checking_copy"))
                 staged = stage_footprint_updates(board_snapshot, result["footprint_updates"], self._language, token)
                 try:
@@ -994,6 +1048,10 @@ class ChatFrame(wx.Frame):
             source_brief = load_brief(board_snapshot["project_path"])
             if session is not None and not session.inherit_requirements:
                 source_brief = {"requirements": {}}
+            if json_path is None:
+                spec.pop("routing", None)
+                if session is not None and session.inherit_requirements and source_brief.get("routing"):
+                    spec["routing"] = source_brief["routing"]
             requirement_rows = review_spec(source_brief, spec,
                                            session.board_size if session is not None else None,
                                            session.board_size_mode if session is not None else "exact")
@@ -1027,6 +1085,9 @@ class ChatFrame(wx.Frame):
             self._design_session = None
             self._refresh_project_brief()
             self._append("CAID", self._t("design_created", **staged))
+            self._append("CAID", self._t("part_review_result",
+                                         parts=staged.get("parts_needing_review", 0),
+                                         questions=staged.get("open_questions", 0)))
             try:
                 rows = load_brief(staged["directory"]).get("requirement_review", [])
                 checked = sum(row["status"] == "pass" for row in rows)
@@ -1153,14 +1214,15 @@ class ChatFrame(wx.Frame):
         except Exception as exc:
             wx.CallAfter(self._error, str(exc), token)
 
-    def _routing_run(self, project_path, board_name, contract, net_name, token):
+    def _routing_run(self, project_path, board_name, contract, net_name, max_nets, token):
         try:
             def progress(index, total, name):
                 label = (f"Route {index}/{total}: {name}" if self._language != "de" else
                          f"Route {index}/{total}: {name}")
                 wx.CallAfter(self._set_activity, token, label)
             result = route_project(project_path, board_name, contract, net_name,
-                                   language=self._language, token=token, progress=progress)
+                                   max_nets=max_nets, language=self._language,
+                                   token=token, progress=progress)
             wx.CallAfter(self._routing_result, result, token)
         except Exception as exc:
             wx.CallAfter(self._error, str(exc), token)
@@ -1170,16 +1232,26 @@ class ChatFrame(wx.Frame):
             return
         if self._language == "de":
             message = (f"Routing-Kopie: {result['directory']}\n\n"
-                       f"Verbundene Netze: {len(result['accepted'])}; übersprungen: {len(result['skipped'])}. "
+                       f"Verbesserte Netze: {len(result['accepted'])}; übersprungen: {len(result['skipped'])}. "
                        f"Offene Verbindungen: {result['unconnected_before']} → {result['unconnected_after']}.\n\n"
-                       "Öffne die neue Projektkopie in KiCad. CAID-ROUTING.json enthält jedes Ergebnis. "
+                       f"Geeignete Netze vor dem Lauf: {result['eligible_before']}; "
+                       f"nicht versucht: {result['unattempted']}.\n\n"
+                       "Öffne die neue Projektkopie in KiCad; dort kannst du den nächsten Routinglauf starten. "
+                       "CAID-ROUTING.json enthält jedes Ergebnis. "
                        "Der Routinglauf nutzt den zuletzt gespeicherten Stand der Platine.")
         else:
             message = (f"Routed copy: {result['directory']}\n\n"
-                       f"Connected nets: {len(result['accepted'])}; skipped: {len(result['skipped'])}. "
+                       f"Improved nets: {len(result['accepted'])}; skipped: {len(result['skipped'])}. "
                        f"Open connections: {result['unconnected_before']} → {result['unconnected_after']}.\n\n"
-                       "Open the new project copy in KiCad. CAID-ROUTING.json records each result. "
+                       f"Eligible nets before the pass: {result['eligible_before']}; "
+                       f"not attempted: {result['unattempted']}.\n\n"
+                       "Open the new project copy in KiCad to start another routing pass. "
+                       "CAID-ROUTING.json records each result. "
                        "Routing used the last saved board.")
+        if result["skipped"]:
+            heading = "Übersprungene Netze:" if self._language == "de" else "Skipped nets:"
+            message += "\n\n" + heading + "\n" + "\n".join(
+                f"• {item['net']}: {item['reason']}" for item in result["skipped"][:3])
         self._append("CAID", message)
 
     def _check_result(self, result, token):
@@ -1322,6 +1394,9 @@ class ChatFrame(wx.Frame):
 
     def _apply(self, _event=None):
         if self._busy or not self._pending:
+            return
+        if not self._connection_ok:
+            self._append("CAID", self._t("kicad_connection_error", error=self._connection_error))
             return
         if isinstance(self._pending, BriefProposal):
             try:
