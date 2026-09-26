@@ -65,6 +65,16 @@ class ProjectToolTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             _validate_result({**footprint_change, "placements": [{"ref": "U1"}]})
 
+    def test_net_rename_uses_shared_provider_contract(self):
+        reply = {"answer": "Rename LINK to CLOCK", "edit_schematic": False,
+                 "placements": [], "tool_requests": [], "footprint_updates": [],
+                 "field_updates": [], "net_renames": [{"from": "LINK", "to": "CLOCK"}]}
+        self.assertEqual(_validate_result(reply)["net_renames"], reply["net_renames"])
+        with self.assertRaisesRegex(RuntimeError, "separate review"):
+            _validate_result({**reply, "placements": [{"ref": "U1"}]})
+        with self.assertRaisesRegex(RuntimeError, "Invalid net rename"):
+            _validate_result({**reply, "net_renames": [{"from": "LINK", "to": 4}]})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,14 +18,16 @@ try:
     from .footprints import find_footprint
     from .i18n import localized
     from .process import run_command
-    from .schematic_fields import rewrite_footprint_fields, rewrite_symbol_fields
+    from .schematic_fields import (rewrite_footprint_fields, rewrite_local_net_labels,
+                                   rewrite_symbol_fields)
     from .schematic_fields import _root_forms
 except ImportError:  # KiCad starts main.py directly from the plugin directory.
     from diagnostics import _cli_path
     from footprints import find_footprint
     from i18n import localized
     from process import run_command
-    from schematic_fields import rewrite_footprint_fields, rewrite_symbol_fields
+    from schematic_fields import (rewrite_footprint_fields, rewrite_local_net_labels,
+                                  rewrite_symbol_fields)
     from schematic_fields import _root_forms
 
 
@@ -375,6 +377,61 @@ def stage_field_updates(board_snapshot, updates, language="en", token=None, stan
                             for ref, field in desired)
         return StagedSchematic(source, candidate, stage_dir, hashlib.sha256(original).hexdigest(),
                                diff, details, before_erc, after_erc, candidate_snapshot, before_snapshot)
+    except Exception:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        raise
+
+
+def stage_net_renames(board_snapshot, renames, language="en", token=None):
+    """Stage exact local-label renames and verify every resulting KiCad net."""
+    source = schematic_path(board_snapshot, language)
+    if not isinstance(renames, list) or not 1 <= len(renames) <= 10 or any(
+            not isinstance(item, dict) or set(item) != {"from", "to"} for item in renames):
+        raise ValueError("Provide 1 to 10 local net renames")
+    desired = {}
+    for item in renames:
+        if item["from"] in desired:
+            raise ValueError("Duplicate source net: " + str(item["from"]))
+        desired[item["from"]] = item["to"]
+    original = source.read_bytes()
+    updated_text, counts = rewrite_local_net_labels(original.decode("utf-8-sig"), desired)
+    stage_dir = Path(tempfile.mkdtemp(prefix="caid-nets-"))
+    candidate = stage_dir / source.name
+    try:
+        candidate.write_text(updated_text, encoding="utf-8")
+        _copy_project_support(source, stage_dir)
+        with tempfile.TemporaryDirectory(prefix="caid-net-check-") as check_dir:
+            before_root = _run_cli_netlist(source, Path(check_dir) / "before.xml", language, token)
+            after_root = _run_cli_netlist(candidate, Path(check_dir) / "after.xml", language, token)
+            before_snapshot = _netlist_snapshot(before_root, source, full=True)
+            after_snapshot = _netlist_snapshot(after_root, candidate, full=True)
+            before_erc = _erc_counts(source, Path(check_dir) / "before.json", language, token)
+            after_erc = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+        if before_snapshot["components"] != after_snapshot["components"]:
+            raise RuntimeError("KiCad components changed during a net rename")
+        def net_map(root):
+            return {net.get("name", ""): sorted((node.get("ref", ""), node.get("pin", ""))
+                    for node in net.findall("node")) for net in root.findall("./nets/net")}
+        before_nets = net_map(before_root)
+        after_nets = net_map(after_root)
+        old_names = {"/" + old for old in desired}
+        new_names = {"/" + new for new in desired.values()}
+        if not old_names <= before_nets.keys() or new_names & before_nets.keys():
+            raise ValueError("Source net missing or target net already exists in KiCad netlist")
+        expected = {"/" + desired[name[1:]] if name in old_names else name: nodes
+                    for name, nodes in before_nets.items()}
+        if after_nets != expected:
+            raise RuntimeError("KiCad netlist changed beyond the requested net names")
+        diff = "".join(difflib.unified_diff(
+            original.decode("utf-8-sig").splitlines(keepends=True),
+            updated_text.splitlines(keepends=True),
+            fromfile=source.name + " (before)", tofile=source.name + " (proposal)"))
+        (stage_dir / "change.diff").write_text(diff, encoding="utf-8")
+        details = ", ".join(f"{old} → {new} ({counts[old]} labels)"
+                            for old, new in desired.items())
+        return StagedSchematic(source, candidate, stage_dir,
+                               hashlib.sha256(original).hexdigest(), diff, details,
+                               before_erc, after_erc, after_snapshot, before_snapshot)
     except Exception:
         shutil.rmtree(stage_dir, ignore_errors=True)
         raise
