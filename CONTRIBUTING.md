@@ -13,4 +13,4 @@ Changes to editor integration also need a manual check in KiCad 10. Include the 
 
 ## Releases
 
-Use `vX.Y.Z` for both the Git tag and the GitHub release title. For example, version `0.23.2` has tag and title `v0.23.2`. Attach the versioned PCM and launcher ZIP files and their SHA-256 checksums. Confirm that the installation instructions link to the new release before publishing it.
+Use `vX.Y.Z` for both the Git tag and GitHub release title. Keep `pcm/metadata.json` and the installation instructions at the same version. Push the tag after CI passes on `main`. The release workflow builds the single PCM ZIP, publishes its checksum, and deploys the KiCad repository index to GitHub Pages. Verify the release archive URL, repository URL, and SHA-256 after deployment.

@@ -1,0 +1,56 @@
+name: Release and publish KiCad repository
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.11'
+      - name: Run tests
+        run: python -m unittest discover -s tests -q
+      - name: Build package and repository
+        run: |
+          python scripts/build_pcm.py
+          python scripts/build_repository.py --tag "$GITHUB_REF_NAME"
+          cd build
+          sha256sum "caid-chat-kicad10-pcm-${GITHUB_REF_NAME#v}.zip" > "caid-chat-kicad10-pcm-${GITHUB_REF_NAME#v}.zip.sha256"
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "build/caid-chat-kicad10-pcm-${GITHUB_REF_NAME#v}.zip" \
+            "build/caid-chat-kicad10-pcm-${GITHUB_REF_NAME#v}.zip.sha256" \
+            --title "$GITHUB_REF_NAME" --generate-notes
+      - name: Upload repository site
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: build/pcm-site
+
+  deploy:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy repository site
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

@@ -8,14 +8,11 @@ The interface follows **KiCad's language setting**. English and German are suppo
 
 ## Windows installation
 
-Requires KiCad 10 on Windows with **Enable KiCad API** selected in KiCad's plugin preferences. Download both ZIP files from the [v0.23.2 release](https://github.com/Attackwave/caid/releases/tag/v0.23.2):
+Requires KiCad 10 on Windows. Enable **KiCad API** in KiCad's plugin preferences. In **Plugin and Content Manager → Manage Repositories**, add `https://attackwave.github.io/caid/pcm/repository.json`. Select **CAID Chat** in that repository and click **Install**. Restart KiCad, open a saved board in the PCB editor, then choose **Tools → External Plugins → Open CAID Chat**. Enter `/status` to check the connection.
 
-1. Install `caid-chat-kicad10-pcm-0.23.2.zip` through **Plugin and Content Manager → Install from File**. Confirm that CAID Chat appears under **Installed**.
-2. Extract `caid-chat-kicad10-launcher-0.23.2.zip` into `%USERPROFILE%\Documents\KiCad\10.0\scripting\plugins`. The resulting file must be `...\scripting\plugins\caid_launcher\__init__.py`. Replace an older copy if prompted.
-3. Close all KiCad windows and start KiCad again. Open a saved board in the PCB editor, then choose **Tools → External Plugins → Open CAID Chat**.
-4. Enter `/status` in CAID. It should show the KiCad version and the open board. If the API times out, save your work, close every KiCad process, reopen one board, and enter `/reconnect`.
+You can also download the single `caid-chat-kicad10-pcm-0.23.3.zip` from the [v0.23.3 release](https://github.com/Attackwave/caid/releases/tag/v0.23.3) and use **Install from File**. The package includes the menu launcher. To build from source, run `python3 scripts/build_pcm.py`; the archive appears in `build/`. KiCad installs its runtime dependencies when it installs the PCM package.
 
-To build from a source checkout, run `python3 scripts/build_pcm.py`. This creates both ZIP files in `build/`; install them with the same steps. The build script needs only Python's standard library. KiCad installs the plugin's runtime dependencies when it installs the PCM package.
+If you installed an older release with the separate launcher ZIP, remove the old `caid_launcher` directory from `%USERPROFILE%\Documents\KiCad\10.0\scripting\plugins` once. Otherwise KiCad may show the action twice. New installations need no file copying.
 
 Select **Codex (WSL sign-in)** if Codex CLI is installed and signed in within WSL. Alternatively select **OpenAI API**, **Anthropic Claude**, or **Google Gemini** and enter its model ID and API key. For local inference, start Ollama or the LM Studio server, select it in **Connection**, then click **Test model**. CAID lists installed local models, chooses the first one when the model field is empty, and checks a structured reply. The button also checks the selected cloud model. The default local address is `127.0.0.1`; WSL is not needed for these HTTP providers. The window labels an address outside the local machine as an external server. Provider, model, and server address are saved without credentials in `%APPDATA%\CAID\provider.json`; API keys remain only in the open window and are kept separate by provider.
 
@@ -41,4 +38,4 @@ Use `/route layers 1|2|4|…|32` and `/route rules width clearance edge_clearanc
 
 ## Development
 
-Run `python3 -m unittest discover -s tests -q` for unit tests and `python3 scripts/build_pcm.py` to create both installable ZIPs under `build/`. The `build/` and `tmp/` directories are ignored by Git. Local KiCad test projects belong under `tmp/hardware/`; generated reports and exports belong under `build/`.
+Run `python3 -m unittest discover -s tests -q` for unit tests and `python3 scripts/build_pcm.py` to create the installable ZIP under `build/`. The `build/` and `tmp/` directories are ignored by Git. Local KiCad test projects belong under `tmp/hardware/`; generated reports and exports belong under `build/`.
