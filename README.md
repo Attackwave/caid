@@ -10,7 +10,7 @@ The interface follows **KiCad's language setting**. English and German are suppo
 
 Requires KiCad 10 on Windows. Enable **KiCad API** in KiCad's plugin preferences. In **Plugin and Content Manager → Manage Repositories**, add `https://attackwave.github.io/caid/pcm/repository.json`. Select **CAID Chat** in that repository and click **Install**. Restart KiCad, open a saved board in the PCB editor, then choose **Tools → External Plugins → Open CAID Chat**. Enter `/status` to check the connection.
 
-You can also download the single `caid-chat-kicad10-pcm-0.23.5.zip` from the [v0.23.5 release](https://github.com/Attackwave/caid/releases/tag/v0.23.5) and use **Install from File**. The package includes the menu launcher. To build from source, run `python3 scripts/build_pcm.py`; the archive appears in `build/`. KiCad installs its runtime dependencies when it installs the PCM package. If an older manually installed launcher is present, the bundled one lets it provide the menu action; no cleanup is required.
+You can also download the single `caid-chat-kicad10-pcm-0.23.6.zip` from the [v0.23.6 release](https://github.com/Attackwave/caid/releases/tag/v0.23.6) and use **Install from File**. The package includes the menu launcher. To build from source, run `python3 scripts/build_pcm.py`; the archive appears in `build/`. KiCad installs its runtime dependencies when it installs the PCM package. If an older manually installed launcher is present, the bundled one lets it provide the menu action; no cleanup is required.
 
 Select **Codex (WSL sign-in)** if Codex CLI is installed and signed in within WSL. Alternatively select **OpenAI API**, **Anthropic Claude**, or **Google Gemini** and enter its model ID and API key. For local inference, start Ollama or the LM Studio server, select it in **Connection**, then click **Test model**. CAID lists installed local models, chooses the first one when the model field is empty, and checks a structured reply. The button also checks the selected cloud model. The default local address is `127.0.0.1`; WSL is not needed for these HTTP providers. The window labels an address outside the local machine as an external server. Provider, model, and server address are saved without credentials in `%APPDATA%\CAID\provider.json`; API keys remain only in the open window and are kept separate by provider.
 
@@ -20,11 +20,11 @@ Use `/status`, `/board`, `/schematic`, `/sync`, `/f8`, `/erc`, `/drc`, `/new`, a
 
 KiCad 10's IPC plugin runs in its own process; its documented API has no facility to dock an external window as a native sidebar. CAID remembers its position and size in `%APPDATA%\CAID\window.json`; the file contains no chat content or credentials.
 
-Schematic proposals include a combined review of ERC and the resulting PCB pad-net and footprint-ID differences. An explicit change to an installed project or standard footprint can be staged through any configured model provider. Applying a staged schematic creates a backup, then offers KiCad's native F8 update for PCB changes. Package fit to the exact physical part remains a separate check.
+Schematic proposals include a combined review of ERC and the resulting PCB pad-net and footprint-ID differences. Any configured model provider can propose bounded `Value` and installed `Footprint` changes to existing symbols. CAID validates them on a copy against the complete KiCad netlist before offering Apply. Applying a staged schematic creates a backup, then offers KiCad's native F8 update for PCB changes. Package fit to the exact physical part remains a separate check. Freeform topology edits still use the Codex WSL provider.
 
 While a task runs, the window shows activity and a **Cancel** button. Cancel stops a running Codex/WSL subprocess. For HTTP providers, late responses are discarded.
 
-The schematic snapshot reflects the last saved file. Placement geometry checks do not replace KiCad DRC or ERC. Direct schematic editing currently requires the Codex WSL provider.
+The schematic snapshot reflects the last saved file. Placement geometry checks do not replace KiCad DRC or ERC.
 
 ## New design drafts (0.22.0)
 
@@ -33,6 +33,10 @@ Use `/design task` (or `/entwurf Aufgabe`) to request a separate new KiCad proje
 ## Routing (0.22.0)
 
 Use `/route layers 1|2|4|…|32` and `/route rules width clearance edge_clearance` for one routing layer or `/route rules width clearance via_diameter via_drill edge_clearance` for multiple layers (all dimensions in mm). `/route check` compares these requirements with the open KiCad board, checks whether each footprint could fit the stated board size after a 90° rotation, and runs saved-board DRC. `/route start` routes up to 20 eligible nets (2 to 32 pads, including partially routed nets) in a separate project copy; `/route net NET_NAME` selects one. Each proposed net is kept only if KiCad DRC adds no findings and the open-connection count decreases. The copy records results in `CAID-ROUTING.json`. Closed nonrectangular outlines and filled copper zones are considered during path search. Complete routing requirements are written into new KiCad project files and isolated routing copies; stricter existing minimum rules block the copy. Complex zone interactions and large nets still need manual review. Freerouting is not used.
+
+## Part and design review
+
+New drafts accept optional part evidence for each component: exact manufacturer part number, datasheet URL, package identifier, documented pin map, body height, and the source of that height. Optional top and bottom body clearances are measured from the corresponding PCB surface. A stated height above its clearance blocks the draft. Missing evidence remains visible in `CAID-REVIEW.json` and the new project's `CAID-Projekt.json`; the report also includes KiCad checks and open questions. A documented pin map is checked for symbol pin numbers and differing pin names are flagged, but its electrical meaning and the real package dimensions still require independent verification before manufacture.
 
 ## Development
 

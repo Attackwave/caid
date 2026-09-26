@@ -18,14 +18,14 @@ try:
     from .footprints import find_footprint
     from .i18n import localized
     from .process import run_command
-    from .schematic_fields import rewrite_footprint_fields
+    from .schematic_fields import rewrite_footprint_fields, rewrite_symbol_fields
     from .schematic_fields import _root_forms
 except ImportError:  # KiCad starts main.py directly from the plugin directory.
     from diagnostics import _cli_path
     from footprints import find_footprint
     from i18n import localized
     from process import run_command
-    from schematic_fields import rewrite_footprint_fields
+    from schematic_fields import rewrite_footprint_fields, rewrite_symbol_fields
     from schematic_fields import _root_forms
 
 
@@ -78,7 +78,7 @@ def _run_cli_netlist(schematic, output, language="en", token=None):
     return ElementTree.parse(output).getroot()
 
 
-def _netlist_snapshot(root, path):
+def _netlist_snapshot(root, path, *, full=False):
     source = path.read_bytes()
     notes, note_count, notes_truncated = _schematic_notes(source.decode("utf-8-sig"))
     components = []
@@ -100,9 +100,9 @@ def _netlist_snapshot(root, path):
         "saved_file_sha256": hashlib.sha256(source).hexdigest(),
         "component_count": len(components),
         "net_count": len(nets),
-        "components": components[:200],
-        "nets": nets[:300],
-        "truncated": len(components) > 200 or len(nets) > 300,
+        "components": components if full else components[:200],
+        "nets": nets if full else nets[:300],
+        "truncated": False if full else len(components) > 200 or len(nets) > 300,
         "notes": notes,
         "note_count": note_count,
         "notes_truncated": notes_truncated,
@@ -164,6 +164,7 @@ class StagedSchematic:
     erc_before: tuple[int, int]
     erc_after: tuple[int, int]
     candidate_snapshot: dict | None = None
+    before_snapshot: dict | None = None
 
     def cleanup(self):
         shutil.rmtree(self.stage_dir, ignore_errors=True)
@@ -319,6 +320,61 @@ def stage_footprint_updates(board_snapshot, updates, language="en", token=None, 
                          "Installierte Bibliotheksdateien gefunden; die Passung zum physischen Gehäuse ist nicht geprüft.")
         return StagedSchematic(source, candidate, stage_dir, hashlib.sha256(original).hexdigest(),
                                diff, details + "\n" + note, before, after, candidate_snapshot)
+    except Exception:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        raise
+
+
+def stage_field_updates(board_snapshot, updates, language="en", token=None, standard_root=None):
+    """Stage bounded Value/Footprint updates from any model on an isolated copy."""
+    source = schematic_path(board_snapshot, language)
+    if not 1 <= len(updates) <= 20:
+        raise ValueError("Provide 1 to 20 schematic field updates")
+    desired = {}
+    for entry in updates:
+        if not isinstance(entry, dict) or set(entry) != {"ref", "field", "value"}:
+            raise ValueError("Invalid schematic field update")
+        key = (entry["ref"], entry["field"])
+        if key in desired:
+            raise ValueError(f"Duplicate schematic field update: {key[0]}.{key[1]}")
+        desired[key] = entry["value"]
+    for (ref, field), value in desired.items():
+        if field == "Footprint" and find_footprint(source.parent, value, standard_root) is None:
+            raise ValueError(f"Footprint {value} is not installed for {ref}")
+    original = source.read_bytes()
+    updated_text, previous = rewrite_symbol_fields(original.decode("utf-8-sig"), desired)
+    stage_dir = Path(tempfile.mkdtemp(prefix="caid-fields-"))
+    candidate = stage_dir / source.name
+    try:
+        candidate.write_text(updated_text, encoding="utf-8")
+        _copy_project_support(source, stage_dir)
+        with tempfile.TemporaryDirectory(prefix="caid-field-check-") as check_dir:
+            before_root = _run_cli_netlist(source, Path(check_dir) / "before.xml", language, token)
+            candidate_root = _run_cli_netlist(candidate, Path(check_dir) / "after.xml", language, token)
+            before_snapshot = _netlist_snapshot(before_root, source, full=True)
+            candidate_snapshot = _netlist_snapshot(candidate_root, candidate, full=True)
+            before_erc = _erc_counts(source, Path(check_dir) / "before.json", language, token)
+            after_erc = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+        def topology(root):
+            components = {comp.get("ref", "") for comp in root.findall("./components/comp")}
+            nets = {net.get("name", ""): sorted((node.get("ref", ""), node.get("pin", ""))
+                    for node in net.findall("node")) for net in root.findall("./nets/net")}
+            return components, nets
+        if topology(before_root) != topology(candidate_root):
+            raise RuntimeError("KiCad netlist topology changed during a field-only update")
+        by_ref = {comp.get("ref", ""): comp for comp in candidate_root.findall("./components/comp")}
+        for (ref, field), value in desired.items():
+            actual = by_ref[ref].findtext(field.casefold(), default="") if ref in by_ref else None
+            if actual != value:
+                raise RuntimeError(f"KiCad netlist does not contain {ref}.{field} = {value}")
+        diff = "".join(difflib.unified_diff(
+            original.decode("utf-8-sig").splitlines(keepends=True), updated_text.splitlines(keepends=True),
+            fromfile=source.name + " (before)", tofile=source.name + " (proposal)"))
+        (stage_dir / "change.diff").write_text(diff, encoding="utf-8")
+        details = ", ".join(f"{ref}.{field}: {previous[(ref, field)] or '∅'} → {value}"
+                            for ref, field in desired)
+        return StagedSchematic(source, candidate, stage_dir, hashlib.sha256(original).hexdigest(),
+                               diff, details, before_erc, after_erc, candidate_snapshot, before_snapshot)
     except Exception:
         shutil.rmtree(stage_dir, ignore_errors=True)
         raise

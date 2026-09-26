@@ -256,6 +256,7 @@ def complete_design(project_path, destination, session, result, review=None):
     target["generated_design"] = {key: result[key] for key in
                                   ("name", "components", "nets", "erc_errors", "erc_warnings",
                                    "drc_errors", "drc_warnings")}
+    target["part_evidence"] = result.get("part_evidence", [])
     target["requirement_review"] = review or []
     target["history"] = list(source["history"]) if inherited else []
     target["routing"] = (json.loads(json.dumps(result["routing"], ensure_ascii=False))
@@ -279,6 +280,7 @@ def model_context(brief):
             "pcb_size_mode": brief.get("pcb_size_mode"),
             "pcb_size_status": brief.get("pcb_size_status"),
             "requirement_review": brief.get("requirement_review", [])[:100],
+            "part_evidence": brief.get("part_evidence", [])[:60],
             "latest_design": brief.get("latest_design"),
             "routing": brief.get("routing")}
 
