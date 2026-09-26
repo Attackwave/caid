@@ -40,6 +40,9 @@ def _project_copy(source, destination, board_name):
         path = source / name
         if path.is_file():
             shutil.copy2(path, destination / name)
+    for path in source.glob("*.kicad_sym"):
+        if path.is_file():
+            shutil.copy2(path, destination / path.name)
     for path in source.glob("*.pretty"):
         if path.is_dir():
             shutil.copytree(path, destination / path.name)
@@ -101,6 +104,11 @@ def read_saved_board_snapshot(project_path, board_name, token=None):
         return _worker({"action": "inspect", "source": str(source)}, Path(temporary), token)
 
 
+def _routing_output_parent(project):
+    """Keep follow-up passes beside the previous copy, not nested within it."""
+    return project.parent if project.parent.name == "CAID-Routing" else project / "CAID-Routing"
+
+
 def route_project(project_path, board_name, contract, net_name=None, *, max_nets=20,
                   language="en", token=None, progress=None):
     """Return a reviewed route copy; original files remain untouched."""
@@ -135,8 +143,9 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
         blockers = preflight(contract, board_snapshot, baseline)
         if blockers:
             raise ValueError("Source PCB failed routing preflight: " + "; ".join(blockers[:6]))
-        candidates = ([net_name] if net_name else
-                      _worker({"action": "list", "source": str(working)}, staging, token))[:max_nets]
+        all_candidates = ([net_name] if net_name else
+                          _worker({"action": "list", "source": str(working)}, staging, token))
+        candidates = all_candidates[:max_nets]
         if not candidates:
             raise ValueError("No unrouted nets with 2 to 32 pads found")
         accepted = []
@@ -165,7 +174,8 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
                                      f"{len(checked.get('unconnected_items', []))} open")
                 shutil.copy2(output, working)
                 report = checked
-                accepted.append(result)
+                accepted.append({key: value for key, value in result.items()
+                                 if key not in {"source", "destination"}})
             except ValueError as exc:
                 skipped.append({"net": name, "reason": str(exc)[:500]})
         if not accepted:
@@ -173,8 +183,8 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
             raise ValueError("No DRC-clean route found. " + reasons)
         if sha256(source.read_bytes()).hexdigest() != source_hash:
             raise ValueError("Source PCB changed during routing; restart from the saved board")
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        parent = project / "CAID-Routing"
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+        parent = _routing_output_parent(project)
         parent.mkdir(exist_ok=True)
         destination = parent / f"{Path(board_name).stem}-{stamp}"
         if destination.exists():
@@ -187,10 +197,14 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
             "contract": contract, "accepted": accepted,
             "skipped": skipped, "unconnected_before": len(baseline.get("unconnected_items", [])),
             "unconnected_after": len(report.get("unconnected_items", [])),
+            "eligible_before": len(all_candidates), "attempted": len(candidates),
+            "unattempted": max(0, len(all_candidates) - len(candidates)),
             "remaining_scope": "nets with 2 to 32 pads and open copper connections"},
             ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         staging.replace(destination)
         return {"directory": str(destination), "accepted": accepted, "skipped": skipped,
+                "eligible_before": len(all_candidates), "attempted": len(candidates),
+                "unattempted": max(0, len(all_candidates) - len(candidates)),
                 "unconnected_before": len(baseline.get("unconnected_items", [])),
                 "unconnected_after": len(report.get("unconnected_items", []))}
     finally:

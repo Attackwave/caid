@@ -108,7 +108,7 @@ MESSAGES = {
         "/design cancel abandons the current design dialogue.\n\n"
         "/erc checks the saved schematic.\n\n"
         "/drc checks the saved PCB.\n\n"
-        "/route sets routing requirements; /route check runs the preflight; /route start routes eligible nets in a project copy.\n\n"
+        "/route sets routing requirements; /route check runs the preflight; /route start [count] attempts up to 100 eligible nets in a project copy.\n\n"
         "/new clears the conversation.\n\n"
         "In chat, you can ask CAID to inspect selected parts, nets, or footprints, "
         "assign an installed footprint, or propose placement.\n\n"
@@ -132,14 +132,15 @@ MESSAGES = {
         "/entwurf abbrechen beendet den laufenden Entwurfsdialog.\n\n"
         "/erc prüft den gespeicherten Schaltplan.\n\n"
         "/drc prüft die gespeicherte Platine.\n\n"
-        "/routing erfasst Routing-Vorgaben; /routing prüfen startet die Vorprüfung; /routing starten routet geeignete Netze auf einer Projektkopie.\n\n"
+        "/routing erfasst Routing-Vorgaben; /routing prüfen startet die Vorprüfung; /routing starten [Anzahl] versucht bis zu 100 geeignete Netze auf einer Projektkopie.\n\n"
         "/neu beginnt ein neues Gespräch.\n\n"
-        "Im Chat kannst du CAID nach ausgewählten Bauteilen, Netzen oder Footprints "
         "Im Chat kannst du CAID nach ausgewählten Bauteilen, Netzen oder Footprints "
         "fragen, einen installierten Footprint zuordnen oder eine Platzierung vorschlagen lassen.\n\n"
         "Schaltplanvorschläge zeigen ihre PCB-Auswirkung; nach Übernahme prüfst du "
         "die PCB-Aktualisierung mit F8."),
     "history_cleared": ("Chat history cleared.", "Gesprächsverlauf gelöscht."),
+    "route_pass_size_required": ("Provide one routing pass size.", "Gib genau eine Anzahl für den Routinglauf an."),
+    "route_pass_size_range": ("Routing pass size must be between 1 and 100.", "Die Anzahl pro Routinglauf muss zwischen 1 und 100 liegen."),
     "board_unknown": ("Could not identify the board: {error}", "Platine konnte nicht erkannt werden: {error}"),
     "board_unreadable": ("Could not read the board: {error}", "Platine konnte nicht gelesen werden: {error}"),
     "checking": ("{check} is running …", "{check} läuft …"),

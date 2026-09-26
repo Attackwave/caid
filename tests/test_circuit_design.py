@@ -39,6 +39,15 @@ class CircuitDesignTests(unittest.TestCase):
         self.assertIn('(label "LINK"', source)
         self.assertEqual(connections[("U1", "2")], "LINK")
 
+    def test_sourced_part_fields_are_written_to_schematic(self):
+        self.spec["components"][0]["part"] = {
+            "mpn": "Example-2", "datasheet_url": "https://example.com/part.pdf"}
+        parts, connections = validate_design(self.spec, self.root,
+                                             symbol_root=self.symbols, footprint_root=self.footprints)
+        source = render_schematic(self.spec, parts, connections)
+        self.assertIn('(property "Datasheet" "https://example.com/part.pdf"', source)
+        self.assertIn('(property "MPN" "Example-2"', source)
+
     def test_rejects_missing_footprint_pad(self):
         (self.footprints / "Test.pretty" / "Part.kicad_mod").write_text('''(footprint "Part" (pad "1" smd rect))''')
         with self.assertRaisesRegex(ValueError, "lacks symbol pin numbers"):

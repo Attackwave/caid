@@ -322,8 +322,17 @@ def render_schematic(spec, resolved, connections):
                 ' (effects (font (size 1.27 1.27))))',
                 f'    (property "Footprint" {_quote(component["footprint"])} (at {_mm(x)} {_mm(y)} 0)'
                 ' (effects (font (size 1.27 1.27)) (hide yes)))',
-                "  )",
             ))
+            part = component.get("part", {})
+            if part.get("datasheet_url"):
+                parts.append(f'    (property "Datasheet" {_quote(part["datasheet_url"])}'
+                             f' (at {_mm(x)} {_mm(y)} 0)'
+                             ' (effects (font (size 1.27 1.27)) (hide yes)))')
+            if part.get("mpn"):
+                parts.append(f'    (property "MPN" {_quote(part["mpn"])}'
+                             f' (at {_mm(x)} {_mm(y)} 0)'
+                             ' (effects (font (size 1.27 1.27)) (hide yes)))')
+            parts.append("  )")
     for (ref, pin), name in connections.items():
         item = resolved[ref]
         pin_x, pin_y = item["pins"][pin]
@@ -419,8 +428,12 @@ def _write_pcb(staging, name, resolved, connections, outline, language, token, r
                "outline": outline, "copper_layers": max(2, routing["requested_layers"]) if routing else None}
     for ref, item in resolved.items():
         path = Path(item["footprint_file"])
+        part = item["source"].get("part", {})
         payload["components"].append({"ref": ref, "value": item["source"]["value"],
                                       "footprint_id": item["source"]["footprint"],
+                                      "fields": {key: value for key, value in (
+                                          ("Datasheet", part.get("datasheet_url")),
+                                          ("MPN", part.get("mpn"))) if value},
                                       "directory": str(path.parent), "name": path.stem,
                                       "uuid": item["uuid"], "side": item["side"],
                                       "pcb_x_mm": item["pcb_x"], "pcb_y_mm": item["pcb_y"]})

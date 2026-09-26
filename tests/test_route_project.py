@@ -4,11 +4,41 @@ from pathlib import Path
 from unittest.mock import patch
 
 from caid_chat.project_brief import set_requirement
-from caid_chat.route_project import _findings, route_project
+from caid_chat.route_project import _findings, _project_copy, _routing_output_parent, route_project
+from caid_chat.route_worker import _search_windows
 from caid_chat.routing import default_contract, set_layers, set_limits
 
 
 class RouteProjectTests(unittest.TestCase):
+    def test_large_board_routes_start_with_local_windows(self):
+        board = (0, 0, 500, 500)
+        windows = _search_windows(board, [(240, 240), (245, 245)])
+        self.assertEqual(windows[0], (235, 235, 250, 250))
+        self.assertEqual(windows[-1], board)
+        self.assertLess((windows[0][2] - windows[0][0]) *
+                        (windows[0][3] - windows[0][1]), 500 * 500)
+
+    def test_search_windows_clip_to_board_edges(self):
+        board = (10, 20, 100, 80)
+        windows = _search_windows(board, [(11, 22), (16, 25)])
+        self.assertEqual(windows[0], (10, 20, 21, 30))
+        self.assertEqual(windows[-1], board)
+
+    def test_follow_up_route_copy_stays_beside_previous_copy(self):
+        self.assertEqual(_routing_output_parent(Path("/project")), Path("/project/CAID-Routing"))
+        self.assertEqual(_routing_output_parent(Path("/project/CAID-Routing/pass-1")),
+                         Path("/project/CAID-Routing"))
+
+    def test_route_copy_keeps_project_local_symbol_library(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            source.mkdir()
+            (source / "board.kicad_pcb").write_text("board", encoding="utf-8")
+            (source / "Custom.kicad_sym").write_text("symbols", encoding="utf-8")
+            target = Path(directory) / "copy"
+            _project_copy(source, target, "board.kicad_pcb")
+            self.assertEqual((target / "Custom.kicad_sym").read_text(), "symbols")
+
     def test_new_drc_finding_is_distinct_from_existing(self):
         old = {"violations": [{"severity": "warning", "type": "courtyard",
                                "description": "Missing courtyard", "items": [{"uuid": "pad-1"}]}]}

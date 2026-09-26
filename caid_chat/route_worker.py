@@ -80,8 +80,23 @@ def _coord(index, origin):
     return origin[0] + index[0] * GRID_MM, origin[1] + index[1] * GRID_MM
 
 
-def _path(board, pcbnew, pads, net_name, layer_ids, contract):
-    outline, (left, top, right, bottom) = board_outline(board, pcbnew)
+def _search_windows(board_bounds, endpoints):
+    """Try short local paths first, then widen up to the complete board."""
+    board_left, board_top, board_right, board_bottom = board_bounds
+    xs, ys = zip(*endpoints)
+    windows = []
+    for margin in (5, 15, 40, 100, None):
+        bounds = board_bounds if margin is None else (
+            max(board_left, min(xs) - margin), max(board_top, min(ys) - margin),
+            min(board_right, max(xs) + margin), min(board_bottom, max(ys) + margin))
+        if bounds not in windows:
+            windows.append(bounds)
+    return windows
+
+
+def _path(board, pcbnew, pads, net_name, layer_ids, contract, bounds=None):
+    outline, board_bounds = board_outline(board, pcbnew)
+    left, top, right, bottom = bounds or board_bounds
     edge = contract["limits_mm"]["edge_clearance_mm"]
     width = contract["limits_mm"]["track_width_mm"]
     outline.Deflate(pcbnew.FromMM(edge + width / 2 + GRID_MM),
@@ -230,7 +245,16 @@ def _simplify(path):
 
 
 def _route_pair(board, pcbnew, pads, net_name, layers, contract):
-    route, origin, visited = _path(board, pcbnew, pads, net_name, layers, contract)
+    board_bounds = board_outline(board, pcbnew)[1]
+    last_error = None
+    for bounds in _search_windows(board_bounds, [_point(pad, pcbnew) for pad in pads]):
+        try:
+            route, origin, visited = _path(board, pcbnew, pads, net_name, layers, contract, bounds)
+            break
+        except ValueError as exc:
+            last_error = exc
+    else:
+        raise ValueError(f"No route found for {net_name} in any search area: {last_error}")
     route = _simplify(route)
     net = pads[0].GetNet()
     width = pcbnew.FromMM(contract["limits_mm"]["track_width_mm"])
