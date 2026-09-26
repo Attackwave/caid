@@ -201,6 +201,10 @@ def route_project(project_path, board_name, contract, net_name=None, *, max_nets
             "unattempted": max(0, len(all_candidates) - len(candidates)),
             "remaining_scope": "nets with 2 to 32 pads and open copper connections"},
             ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if token:
+            token.check()
+        if sha256(source.read_bytes()).hexdigest() != source_hash:
+            raise ValueError("Source PCB changed during routing; restart from the saved board")
         staging.replace(destination)
         return {"directory": str(destination), "accepted": accepted, "skipped": skipped,
                 "eligible_before": len(all_candidates), "attempted": len(candidates),

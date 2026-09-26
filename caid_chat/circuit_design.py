@@ -572,6 +572,8 @@ def stage_new_design(spec, parent, *, language="en", token=None, symbol_root=Non
         destination.parent.mkdir(exist_ok=True)
         if destination.exists():
             raise FileExistsError(f"Design already exists: {destination}")
+        if token:
+            token.check()
         staging.replace(destination)
         return {"directory": str(destination), "name": name, "components": len(resolved),
                 "nets": len(spec["nets"]), "erc_errors": erc[0], "erc_warnings": erc[1],
