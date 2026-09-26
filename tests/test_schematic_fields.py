@@ -1,6 +1,7 @@
 import unittest
 
-from caid_chat.schematic_fields import rewrite_footprint_fields, rewrite_symbol_fields
+from caid_chat.schematic_fields import (rewrite_footprint_fields, rewrite_local_net_labels,
+                                        rewrite_symbol_fields)
 
 
 SCHEMATIC = '''(kicad_sch
@@ -18,6 +19,29 @@ SCHEMATIC = '''(kicad_sch
 
 
 class SchematicFieldTests(unittest.TestCase):
+    def test_local_net_rename_touches_only_root_labels(self):
+        source = '''(kicad_sch
+          (lib_symbols (symbol "Lib:Part" (label "LINK")))
+          (text "LINK")
+          (label "LINK" (at 10 20 0))
+          (label "LINK" (at 30 20 0))
+          (label "OTHER" (at 40 20 0)))'''
+        updated, counts = rewrite_local_net_labels(source, {"LINK": "CLOCK"})
+        self.assertEqual(counts, {"LINK": 2})
+        self.assertEqual(updated.count('(label "CLOCK"'), 2)
+        self.assertIn('(label "LINK")))', updated)
+        self.assertIn('(text "LINK")', updated)
+        self.assertIn('(label "OTHER"', updated)
+        for renames, issue in (({"MISSING": "NEW"}, "not found"),
+                               ({"LINK": "OTHER"}, "already exists"),
+                               ({"LINK": "BAD SPACE"}, "Invalid"),
+                               ({"LINK": "OTHER", "OTHER": "NEXT"}, "Chained")):
+            with self.subTest(renames=renames), self.assertRaisesRegex(ValueError, issue):
+                rewrite_local_net_labels(source, renames)
+        with self.assertRaisesRegex(ValueError, "single-sheet"):
+            rewrite_local_net_labels(source.replace('(text "LINK")',
+                                                   '(sheet (at 0 0))'), {"LINK": "CLOCK"})
+
     def test_rewrites_only_placed_symbol(self):
         updated, previous = rewrite_footprint_fields(SCHEMATIC, {"U1": "Library:New"})
         self.assertEqual(previous, {"U1": "Library:Old"})

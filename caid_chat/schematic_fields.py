@@ -8,6 +8,8 @@ _REFERENCE = re.compile(r'\(property\s+"Reference"\s+"([^"\\]+)"')
 _FOOTPRINT = re.compile(r'\(property\s+"Footprint"\s+"([^"\\]*)"')
 _FIELD_VALUE = re.compile(r'\(property\s+"(Value|Footprint)"\s+("(?:\\.|[^"\\])*")')
 _IDENTIFIER = re.compile(r'^[A-Za-z0-9_.+\-]+:[A-Za-z0-9_.+\-]+$')
+_LOCAL_NET_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_+.-]{0,63}$')
+_LABEL_VALUE = re.compile(r'^\(label\s+("(?:\\.|[^"\\])*")')
 
 
 def _root_forms(text):
@@ -98,3 +100,41 @@ def rewrite_footprint_fields(text, updates):
     updated, previous = rewrite_symbol_fields(text, {(ref, "Footprint"): value
                                                      for ref, value in updates.items()})
     return updated, {ref: previous[(ref, "Footprint")] for ref in updates}
+
+
+def rewrite_local_net_labels(text, renames):
+    """Rename exact root-sheet local labels without touching notes or library text."""
+    if not text.lstrip().startswith("(kicad_sch"):
+        raise ValueError("Not a KiCad schematic")
+    if not isinstance(renames, dict) or not 1 <= len(renames) <= 10 or any(
+            not isinstance(old, str) or not isinstance(new, str) or
+            not _LOCAL_NET_NAME.fullmatch(old) or not _LOCAL_NET_NAME.fullmatch(new) or
+            old == new for old, new in renames.items()):
+        raise ValueError("Invalid local net rename")
+    if set(renames) & set(renames.values()) or len(set(renames.values())) != len(renames):
+        raise ValueError("Chained or duplicate net names are not supported")
+    replacements = []
+    found = {old: 0 for old in renames}
+    existing = set()
+    for start, end in _root_forms(text):
+        form = text[start:end]
+        if re.match(r'^\(sheet\s', form):
+            raise ValueError("Local net renaming currently supports single-sheet schematics only")
+        match = _LABEL_VALUE.match(form)
+        if match is None:
+            continue
+        name = json.loads(match.group(1))
+        existing.add(name)
+        if name in renames:
+            found[name] += 1
+            replacements.append((start + match.start(1), start + match.end(1),
+                                 json.dumps(renames[name], ensure_ascii=False)))
+    collision = set(renames.values()) & existing
+    if collision:
+        raise ValueError("Target net label already exists: " + ", ".join(sorted(collision)))
+    missing = [old for old, count in found.items() if count == 0]
+    if missing:
+        raise ValueError("Local net label not found: " + ", ".join(sorted(missing)))
+    for start, end, value in reversed(replacements):
+        text = text[:start] + value + text[end:]
+    return text, found

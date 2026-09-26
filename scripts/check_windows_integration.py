@@ -22,7 +22,7 @@ from caid_chat.route_project import route_project
 from caid_chat.circuit_design import stage_new_design
 from caid_chat.project_recovery import scan_stages
 from caid_chat.routing import default_contract, set_layers, set_limits
-from caid_chat.schematic import stage_field_updates
+from caid_chat.schematic import apply_schematic_edit, stage_field_updates, stage_net_renames
 
 
 KICAD_ROOT = Path(sys.executable).resolve().parent.parent
@@ -69,6 +69,23 @@ def check_new_design(parent):
     assert result["drc_errors"] == 0
     assert scan_stages(project) == []
     print("New design: saved schematic and PCB; no staging copy left behind")
+
+    schematic = output / "RecoverySmoke.kicad_sch"
+    original = hashlib.sha256(schematic.read_bytes()).hexdigest()
+    staged = stage_net_renames(
+        {"project_path": str(output), "document": "RecoverySmoke.kicad_pcb"},
+        [{"from": "LINK", "to": "CLOCK"}])
+    try:
+        assert staged.erc_before == staged.erc_after
+        nets = {item["name"]: item["nodes"] for item in staged.candidate_snapshot["nets"]}
+        assert "/CLOCK" in nets and "/LINK" not in nets
+        assert hashlib.sha256(schematic.read_bytes()).hexdigest() == original
+        backup = apply_schematic_edit(staged)
+        assert hashlib.sha256(backup.read_bytes()).hexdigest() == original
+        assert '(label "CLOCK"' in schematic.read_text(encoding="utf-8")
+    finally:
+        staged.cleanup()
+    print("Net rename: KiCad netlist and ERC verified; reviewed Apply kept a backup")
 
 
 def _point(x, y):

@@ -41,7 +41,8 @@ from provider_settings import load_settings, save_settings
 from routing import default_contract, describe as describe_routing, set_layers, set_limits
 from providers import CLI_PROVIDERS, DEFAULT_MODELS, DEFAULT_URLS, LOCAL_PROVIDERS, PROVIDERS, ask_provider, is_loopback_url, list_local_models, probe_model
 from project_tools import execute_read_tool, tool_label
-from schematic import read_schematic, stage_field_updates, stage_footprint_updates, stage_schematic_edit
+from schematic import (read_schematic, stage_field_updates, stage_footprint_updates,
+                       stage_net_renames, stage_schematic_edit)
 
 
 class ChatFrame(wx.Frame):
@@ -961,9 +962,19 @@ class ChatFrame(wx.Frame):
                     if "result" in cache[key] and label not in inspected:
                         inspected.append(label)
             token.check()
-            if (result["footprint_updates"] or result["field_updates"] or result["edit_schematic"]) and "components" not in schematic_snapshot:
+            if (result["footprint_updates"] or result["field_updates"] or result["net_renames"] or
+                    result["edit_schematic"]) and "components" not in schematic_snapshot:
                 raise RuntimeError(self._t("schematic_required", error=schematic_snapshot.get("unavailable", "")))
-            if result["field_updates"]:
+            if result["net_renames"]:
+                wx.CallAfter(self._set_activity, token, self._t("checking_copy"))
+                staged = stage_net_renames(board_snapshot, result["net_renames"], self._language, token)
+                try:
+                    plan = prepare_design_plan(self._kicad.get_board(), staged, schematic_snapshot, self._language)
+                except Exception:
+                    staged.cleanup()
+                    raise
+                wx.CallAfter(self._schematic_result, plan, messages, result["answer"], token, inspected)
+            elif result["field_updates"]:
                 wx.CallAfter(self._set_activity, token, self._t("checking_copy"))
                 staged = stage_field_updates(board_snapshot, result["field_updates"], self._language, token)
                 try:
