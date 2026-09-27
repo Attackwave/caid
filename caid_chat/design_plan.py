@@ -1,5 +1,6 @@
 """One review object for a staged schematic change and its PCB consequences."""
 
+from collections import Counter
 from dataclasses import dataclass
 
 try:
@@ -17,6 +18,50 @@ except ImportError:
 def _net_map(schematic):
     return {(node["ref"], node["pin"]): net["name"]
             for net in schematic["nets"] for node in net["nodes"]}
+
+
+def _erc_key(finding):
+    def coordinate(item, axis):
+        value = (item.get("pos") or {}).get(axis)
+        return round(value, 4) if isinstance(value, (int, float)) else None
+
+    items = tuple(sorted(((item.get("uuid", ""), item.get("description", ""),
+                           coordinate(item, "x"), coordinate(item, "y"))
+                          for item in finding.get("items", ())), key=repr))
+    return (finding.get("sheet", ""), finding.get("type", ""),
+            finding.get("severity", ""), finding.get("description", ""), items)
+
+
+def new_erc_findings(before, after):
+    """Keep new findings in KiCad report order, accounting for duplicates."""
+    existing = Counter(_erc_key(item) for item in before)
+    added = []
+    for finding in after:
+        key = _erc_key(finding)
+        if existing[key]:
+            existing[key] -= 1
+        else:
+            added.append(finding)
+    return tuple(added)
+
+
+def _format_erc_finding(finding, language):
+    severity = localized(language, "Error" if finding.get("severity") == "error" else "Warning",
+                         "Fehler" if finding.get("severity") == "error" else "Warnung")
+    description = str(finding.get("description") or finding.get("type") or "ERC finding")[:180]
+    details = []
+    for item in finding.get("items", ())[:2]:
+        label = str(item.get("description", ""))[:140]
+        pos = item.get("pos") or {}
+        if isinstance(pos.get("x"), (int, float)) and isinstance(pos.get("y"), (int, float)):
+            label += f" ({pos['x']:g}, {pos['y']:g} mm)"
+        if label:
+            details.append(label)
+    sheet = finding.get("sheet", "")
+    suffix = "; ".join(details)
+    if sheet and sheet != "/":
+        suffix = f"{sheet}: {suffix}" if suffix else sheet
+    return f"  • {severity}: {description}" + (f" — {suffix}" if suffix else "")
 
 
 @dataclass
@@ -89,6 +134,14 @@ def describe_design_plan(plan, language="en"):
     if after_e > before_e:
         lines.insert(2, t("New ERC errors: inspect and resolve them before using the circuit.",
                           "Neue ERC-Fehler: Prüfe und behebe sie, bevor du die Schaltung verwendest."))
+    added_erc = new_erc_findings(getattr(plan.staged, "erc_findings_before", ()),
+                                 getattr(plan.staged, "erc_findings_after", ()))
+    if added_erc:
+        lines.extend(["", t(f"New KiCad ERC findings ({len(added_erc)}):",
+                             f"Neue KiCad-ERC-Befunde ({len(added_erc)}):")])
+        lines.extend(_format_erc_finding(finding, language) for finding in added_erc[:8])
+        if len(added_erc) > 8:
+            lines.append(f"  … +{len(added_erc) - 8}")
     if plan.footprint_changes:
         lines.append(t("Footprint assignments:", "Footprint-Zuordnungen:"))
         lines.extend(f"  {ref}: {old or '∅'} → {new or '∅'}"

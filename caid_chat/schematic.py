@@ -145,7 +145,7 @@ def read_schematic(board_snapshot, language="en", token=None):
     return _netlist_snapshot(root, path)
 
 
-def _erc_counts(schematic, output, language="en", token=None):
+def _erc_report(schematic, output, language="en", token=None):
     completed = run_command(
         [_cli_path(language), "sch", "erc", "--format", "json", "--output", str(output), str(schematic)],
         timeout=90, token=token,
@@ -155,8 +155,24 @@ def _erc_counts(schematic, output, language="en", token=None):
                            (completed.stderr.strip() or completed.stdout.strip())[-500:])
     data = json.loads(output.read_text(encoding="utf-8-sig"))
     violations = [v for sheet in data.get("sheets", []) for v in sheet.get("violations", [])]
-    return (sum(v.get("severity") == "error" for v in violations),
-            sum(v.get("severity") == "warning" for v in violations))
+    counts = (sum(v.get("severity") == "error" for v in violations),
+              sum(v.get("severity") == "warning" for v in violations))
+    findings = tuple({
+        "sheet": sheet.get("path", ""),
+        "type": item.get("type", ""),
+        "severity": item.get("severity", ""),
+        "description": item.get("description", ""),
+        "items": tuple({
+            "uuid": target.get("uuid", ""),
+            "description": target.get("description", ""),
+            "pos": target.get("pos") or {},
+        } for target in item.get("items", [])),
+    } for sheet in data.get("sheets", []) for item in sheet.get("violations", []))
+    return counts, findings
+
+
+def _erc_counts(schematic, output, language="en", token=None):
+    return _erc_report(schematic, output, language, token)[0]
 
 
 @dataclass
@@ -171,6 +187,8 @@ class StagedSchematic:
     erc_after: tuple[int, int]
     candidate_snapshot: dict | None = None
     before_snapshot: dict | None = None
+    erc_findings_before: tuple = ()
+    erc_findings_after: tuple = ()
 
     def cleanup(self):
         shutil.rmtree(self.stage_dir, ignore_errors=True)
@@ -263,8 +281,8 @@ def stage_schematic_edit(board_snapshot, instruction, model, language="en", toke
             candidate_root = _run_cli_netlist(candidate, Path(check_dir) / "candidate.xml", language, token)
             candidate_snapshot = _netlist_snapshot(candidate_root, candidate)
             _validate_circuit_candidate(before_snapshot, candidate_snapshot, language)
-            before = _erc_counts(source, Path(check_dir) / "before.json", language, token)
-            after = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+            before, before_findings = _erc_report(source, Path(check_dir) / "before.json", language, token)
+            after, after_findings = _erc_report(candidate, Path(check_dir) / "after.json", language, token)
         old_lines = original.decode("utf-8").splitlines(keepends=True)
         new_lines = updated.decode("utf-8").splitlines(keepends=True)
         diff = "".join(difflib.unified_diff(old_lines, new_lines,
@@ -275,6 +293,7 @@ def stage_schematic_edit(board_snapshot, instruction, model, language="en", toke
             source, candidate, stage_dir, original_hash, diff,
             answer_file.read_text(encoding="utf-8") if answer_file.exists() else "",
             before, after, candidate_snapshot,
+            erc_findings_before=before_findings, erc_findings_after=after_findings,
         )
     except Exception:
         shutil.rmtree(stage_dir, ignore_errors=True)
@@ -308,8 +327,8 @@ def stage_footprint_updates(board_snapshot, updates, language="en", token=None, 
         with tempfile.TemporaryDirectory(prefix="caid-fp-check-") as check_dir:
             candidate_root = _run_cli_netlist(candidate, Path(check_dir) / "candidate.xml", language, token)
             candidate_snapshot = _netlist_snapshot(candidate_root, candidate)
-            before = _erc_counts(source, Path(check_dir) / "before.json", language, token)
-            after = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+            before, before_findings = _erc_report(source, Path(check_dir) / "before.json", language, token)
+            after, after_findings = _erc_report(candidate, Path(check_dir) / "after.json", language, token)
         by_ref = {item["ref"]: item for item in candidate_snapshot["components"]}
         if any(by_ref.get(ref, {}).get("footprint") != identifier for ref, identifier in desired.items()):
             raise RuntimeError(localized(language, "KiCad netlist does not contain the requested footprint assignments.",
@@ -325,7 +344,8 @@ def stage_footprint_updates(board_snapshot, updates, language="en", token=None, 
         note = localized(language, "Installed library files found; physical package fit is not verified.",
                          "Installierte Bibliotheksdateien gefunden; die Passung zum physischen Gehäuse ist nicht geprüft.")
         return StagedSchematic(source, candidate, stage_dir, hashlib.sha256(original).hexdigest(),
-                               diff, details + "\n" + note, before, after, candidate_snapshot)
+                               diff, details + "\n" + note, before, after, candidate_snapshot,
+                               erc_findings_before=before_findings, erc_findings_after=after_findings)
     except Exception:
         shutil.rmtree(stage_dir, ignore_errors=True)
         raise
@@ -359,8 +379,8 @@ def stage_field_updates(board_snapshot, updates, language="en", token=None, stan
             candidate_root = _run_cli_netlist(candidate, Path(check_dir) / "after.xml", language, token)
             before_snapshot = _netlist_snapshot(before_root, source, full=True)
             candidate_snapshot = _netlist_snapshot(candidate_root, candidate, full=True)
-            before_erc = _erc_counts(source, Path(check_dir) / "before.json", language, token)
-            after_erc = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+            before_erc, before_findings = _erc_report(source, Path(check_dir) / "before.json", language, token)
+            after_erc, after_findings = _erc_report(candidate, Path(check_dir) / "after.json", language, token)
         def topology(root):
             components = {comp.get("ref", "") for comp in root.findall("./components/comp")}
             nets = {net.get("name", ""): sorted((node.get("ref", ""), node.get("pin", ""))
@@ -380,7 +400,8 @@ def stage_field_updates(board_snapshot, updates, language="en", token=None, stan
         details = ", ".join(f"{ref}.{field}: {previous[(ref, field)] or '∅'} → {value}"
                             for ref, field in desired)
         return StagedSchematic(source, candidate, stage_dir, hashlib.sha256(original).hexdigest(),
-                               diff, details, before_erc, after_erc, candidate_snapshot, before_snapshot)
+                               diff, details, before_erc, after_erc, candidate_snapshot, before_snapshot,
+                               before_findings, after_findings)
     except Exception:
         shutil.rmtree(stage_dir, ignore_errors=True)
         raise
@@ -409,8 +430,8 @@ def stage_net_renames(board_snapshot, renames, language="en", token=None):
             after_root = _run_cli_netlist(candidate, Path(check_dir) / "after.xml", language, token)
             before_snapshot = _netlist_snapshot(before_root, source, full=True)
             after_snapshot = _netlist_snapshot(after_root, candidate, full=True)
-            before_erc = _erc_counts(source, Path(check_dir) / "before.json", language, token)
-            after_erc = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+            before_erc, before_findings = _erc_report(source, Path(check_dir) / "before.json", language, token)
+            after_erc, after_findings = _erc_report(candidate, Path(check_dir) / "after.json", language, token)
         if before_snapshot["components"] != after_snapshot["components"]:
             raise RuntimeError("KiCad components changed during a net rename")
         def net_map(root):
@@ -435,7 +456,8 @@ def stage_net_renames(board_snapshot, renames, language="en", token=None):
                             for old, new in desired.items())
         return StagedSchematic(source, candidate, stage_dir,
                                hashlib.sha256(original).hexdigest(), diff, details,
-                               before_erc, after_erc, after_snapshot, before_snapshot)
+                               before_erc, after_erc, after_snapshot, before_snapshot,
+                               before_findings, after_findings)
     except Exception:
         shutil.rmtree(stage_dir, ignore_errors=True)
         raise
@@ -456,8 +478,8 @@ def stage_pin_connections(board_snapshot, requests, language="en", token=None):
             after_root = _run_cli_netlist(candidate, Path(check_dir) / "after.xml", language, token)
             before_snapshot = _netlist_snapshot(before_root, source, full=True)
             after_snapshot = _netlist_snapshot(after_root, candidate, full=True)
-            before_erc = _erc_counts(source, Path(check_dir) / "before.json", language, token)
-            after_erc = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+            before_erc, before_findings = _erc_report(source, Path(check_dir) / "before.json", language, token)
+            after_erc, after_findings = _erc_report(candidate, Path(check_dir) / "after.json", language, token)
         if before_snapshot["components"] != after_snapshot["components"]:
             raise RuntimeError("KiCad components changed during a pin connection")
         def net_map(root):
@@ -492,7 +514,8 @@ def stage_pin_connections(board_snapshot, requests, language="en", token=None):
         details = ", ".join(f"{item['ref']}.{item['pin']} → {item['net']}" for item in requests)
         return StagedSchematic(source, candidate, stage_dir,
                                hashlib.sha256(original).hexdigest(), diff, details,
-                               before_erc, after_erc, after_snapshot, before_snapshot)
+                               before_erc, after_erc, after_snapshot, before_snapshot,
+                               before_findings, after_findings)
     except Exception:
         shutil.rmtree(stage_dir, ignore_errors=True)
         raise
@@ -513,8 +536,8 @@ def stage_no_connect_markers(board_snapshot, requests, language="en", token=None
             after_root = _run_cli_netlist(candidate, Path(check_dir) / "after.xml", language, token)
             before_snapshot = _netlist_snapshot(before_root, source, full=True)
             after_snapshot = _netlist_snapshot(after_root, candidate, full=True)
-            before_erc = _erc_counts(source, Path(check_dir) / "before.json", language, token)
-            after_erc = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+            before_erc, before_findings = _erc_report(source, Path(check_dir) / "before.json", language, token)
+            after_erc, after_findings = _erc_report(candidate, Path(check_dir) / "after.json", language, token)
         if before_snapshot["components"] != after_snapshot["components"]:
             raise RuntimeError("KiCad components changed during a no-connect edit")
         def net_map(root):
@@ -547,7 +570,8 @@ def stage_no_connect_markers(board_snapshot, requests, language="en", token=None
         details = ", ".join(f"{item['ref']}.{item['pin']}: no-connect" for item in requests)
         return StagedSchematic(source, candidate, stage_dir,
                                hashlib.sha256(original).hexdigest(), diff, details,
-                               before_erc, after_erc, after_snapshot, before_snapshot)
+                               before_erc, after_erc, after_snapshot, before_snapshot,
+                               before_findings, after_findings)
     except Exception:
         shutil.rmtree(stage_dir, ignore_errors=True)
         raise
@@ -568,8 +592,8 @@ def stage_pin_disconnections(board_snapshot, requests, language="en", token=None
             after_root = _run_cli_netlist(candidate, Path(check_dir) / "after.xml", language, token)
             before_snapshot = _netlist_snapshot(before_root, source, full=True)
             after_snapshot = _netlist_snapshot(after_root, candidate, full=True)
-            before_erc = _erc_counts(source, Path(check_dir) / "before.json", language, token)
-            after_erc = _erc_counts(candidate, Path(check_dir) / "after.json", language, token)
+            before_erc, before_findings = _erc_report(source, Path(check_dir) / "before.json", language, token)
+            after_erc, after_findings = _erc_report(candidate, Path(check_dir) / "after.json", language, token)
         if before_snapshot["components"] != after_snapshot["components"]:
             raise RuntimeError("KiCad components changed during a pin disconnection")
         def net_map(root):
@@ -601,7 +625,8 @@ def stage_pin_disconnections(board_snapshot, requests, language="en", token=None
                             for item in requests)
         return StagedSchematic(source, candidate, stage_dir,
                                hashlib.sha256(original).hexdigest(), diff, details,
-                               before_erc, after_erc, after_snapshot, before_snapshot)
+                               before_erc, after_erc, after_snapshot, before_snapshot,
+                               before_findings, after_findings)
     except Exception:
         shutil.rmtree(stage_dir, ignore_errors=True)
         raise

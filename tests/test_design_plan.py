@@ -2,7 +2,8 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from caid_chat.design_plan import apply_design_plan, describe_design_plan, prepare_design_plan
+from caid_chat.design_plan import (apply_design_plan, describe_design_plan,
+                                   new_erc_findings, prepare_design_plan)
 
 
 STATE = {"document": "demo.kicad_pcb", "project_path": "/demo", "sha256": "board-hash",
@@ -44,12 +45,25 @@ class DesignPlanTests(unittest.TestCase):
                 apply_design_plan(object(), plan)
 
     def test_increased_erc_errors_are_prominent_in_preview(self):
+        old = {"sheet": "/", "type": "legacy", "severity": "warning",
+               "description": "Earlier issue", "items": ()}
+        fresh = {"sheet": "/", "type": "pin_not_connected", "severity": "error",
+                 "description": "Pin not connected",
+                 "items": ({"uuid": "pin-1", "description": "Symbol R3 Pin 1",
+                            "pos": {"x": 42.5, "y": 55.0}},)}
+
         class ErrorStage(FakeStage):
             erc_after = (2, 2)
+            erc_findings_before = (old, old)
+            erc_findings_after = (old, fresh, old)
 
         with patch("caid_chat.design_plan.board_state", return_value=STATE):
             plan = prepare_design_plan(object(), ErrorStage(), CURRENT, "de")
-        self.assertIn("Neue ERC-Fehler", describe_design_plan(plan, "de"))
+        description = describe_design_plan(plan, "de")
+        self.assertIn("Neue ERC-Fehler", description)
+        self.assertIn("Pin not connected", description)
+        self.assertIn("Symbol R3 Pin 1 (42.5, 55 mm)", description)
+        self.assertEqual(new_erc_findings((old, old), (old, fresh, old)), (fresh,))
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 from caid_chat.route_project import route_project
 from caid_chat.circuit_design import stage_new_design
+from caid_chat.design_plan import new_erc_findings
 from caid_chat.project_recovery import scan_stages
 from caid_chat.routing import default_contract, set_layers, set_limits
 from caid_chat.schematic import (apply_schematic_edit, stage_field_updates,
@@ -144,6 +145,7 @@ def check_new_design(parent):
         assert {"ref": "R3", "pin": "1"} in before["/CLOCK"]
         assert {"ref": "R3", "pin": "1"} not in after["/CLOCK"]
         assert staged.erc_after[0] >= staged.erc_before[0]
+        assert new_erc_findings(staged.erc_findings_before, staged.erc_findings_after)
         assert hashlib.sha256(schematic.read_bytes()).hexdigest() == original
         backup = apply_schematic_edit(staged)
         assert hashlib.sha256(backup.read_bytes()).hexdigest() == original
