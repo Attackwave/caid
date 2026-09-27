@@ -10,7 +10,7 @@ The interface follows **KiCad's language setting**. English and German are suppo
 
 Requires KiCad 10 on Windows. Enable **KiCad API** in KiCad's plugin preferences. In **Plugin and Content Manager → Manage Repositories**, add `https://attackwave.github.io/caid/pcm/repository.json`. Select **CAID Chat** in that repository and click **Install**. Restart KiCad, open a saved board in the PCB editor, then choose **Tools → External Plugins → Open CAID Chat**. Enter `/status` to check the connection.
 
-You can also download the single `caid-chat-kicad10-pcm-0.30.0.zip` from the [v0.30.0 release](https://github.com/Attackwave/caid/releases/tag/v0.30.0) and use **Install from File**. The package includes the menu launcher. To build from source, run `python3 scripts/build_pcm.py`; the archive appears in `build/`. KiCad installs its runtime dependencies when it installs the PCM package. If an older manually installed launcher is present, the bundled one lets it provide the menu action; no cleanup is required.
+You can also download the single `caid-chat-kicad10-pcm-0.31.0.zip` from the [v0.31.0 release](https://github.com/Attackwave/caid/releases/tag/v0.31.0) and use **Install from File**. The package includes the menu launcher. To build from source, run `python3 scripts/build_pcm.py`; the archive appears in `build/`. KiCad installs its runtime dependencies when it installs the PCM package. If an older manually installed launcher is present, the bundled one lets it provide the menu action; no cleanup is required.
 
 Select **Codex (WSL sign-in)** if Codex CLI is installed and signed in within WSL. Alternatively select **OpenAI API**, **Anthropic Claude**, or **Google Gemini** and enter its model ID and API key. For local inference, start Ollama or the LM Studio server, select it in **Connection**, then click **Test model**. CAID lists installed local models, chooses the first one when the model field is empty, and checks a structured reply. The button also checks the selected cloud model. The default local address is `127.0.0.1`; WSL is not needed for these HTTP providers. The window labels an address outside the local machine as an external server. Provider, model, and server address are saved without credentials in `%APPDATA%\CAID\provider.json`; API keys remain only in the open window and are kept separate by provider.
 
@@ -31,6 +31,10 @@ The header and `/status` report whether the open PCB has a file on disk. KiCad 1
 Use `/recovery` to inspect interrupted design and routing copies in the current project, even while KiCad's API is unavailable. `/recovery save` moves abandoned copies into `CAID-Recovery` for inspection. CAID keeps running jobs locked and leaves older copies without a valid marker for manual review. Recovery never deletes a copy.
 
 The schematic snapshot reflects the last saved file. Placement geometry checks do not replace KiCad DRC or ERC.
+
+To create a local net between two existing free pins, ask “Connect R3 pin 1 and R4 pin 1 as PAIR.” CAID places matching local labels at their exact pin positions and checks that the new KiCad net contains only those pins. It rejects an existing net name or an already connected pin. This creates an electrical connection without drawing a wire; the single-sheet and symbol-orientation limits above apply.
+
+To add an unconnected single-unit symbol to an existing sheet, name its exact reference, installed symbol ID, value, installed footprint ID, and schematic coordinates. For example: “Add R5, Device:R, 47k, Resistor_SMD:R_0805_2012Metric at 120, 80 mm.” CAID checks the KiCad netlist, shows new ERC findings and the missing PCB footprint, then offers review and Apply. It does not confirm the chosen physical package or check graphical overlap with other symbols; inspect the schematic and use F8 to add the PCB footprint.
 
 ## New design drafts (0.22.0)
 
