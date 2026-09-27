@@ -1,7 +1,8 @@
 import unittest
 
 from caid_chat.schematic_connections import (rewrite_no_connect_markers,
-                                             rewrite_pin_connections, rewrite_pin_disconnections)
+                                             rewrite_pin_connections, rewrite_pin_disconnections,
+                                             rewrite_new_pin_nets)
 
 
 SOURCE = '''(kicad_sch
@@ -14,6 +15,23 @@ SOURCE = '''(kicad_sch
 
 
 class PinConnectionTests(unittest.TestCase):
+    def test_creates_new_local_net_between_two_explicit_free_pins(self):
+        source = SOURCE.replace('(label "LINK" (at 60 55 0))',
+                                '(symbol (lib_id "Device:R") (at 80 55 0) (unit 1) '
+                                '(property "Reference" "R2" (at 80 50 0)))')
+        request = [{"from_ref": "R1", "from_pin": "2", "to_ref": "R2",
+                    "to_pin": "1", "net": "NEW_LINK"}]
+        result, positions = rewrite_new_pin_nets(source, request)
+        self.assertEqual(positions, {(52.54, 55.0), (77.46, 55.0)})
+        self.assertEqual(result.count('(label "NEW_LINK"'), 2)
+        self.assertIn('(label "NEW_LINK" (at 52.54 55 0)', result)
+        with self.assertRaisesRegex(ValueError, "one new net"):
+            rewrite_new_pin_nets(source, request * 2)
+        with self.assertRaisesRegex(ValueError, "one new net"):
+            rewrite_new_pin_nets(source, [{**request[0], "to_ref": "R1", "to_pin": "2"}])
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            rewrite_new_pin_nets(SOURCE, [{**request[0], "net": "LINK"}])
+
     def test_adds_label_at_exact_embedded_pin_position(self):
         result, positions = rewrite_pin_connections(
             SOURCE, [{"ref": "R1", "pin": "1", "net": "LINK"}])

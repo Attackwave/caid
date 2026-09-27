@@ -186,3 +186,41 @@ def rewrite_no_connect_markers(text, requests):
         positions.add((x, y))
         additions.append(f'  (no_connect (at {x:g} {y:g}) (uuid "{uuid.uuid4()}"))')
     return _append_forms(text, additions), positions
+
+
+def rewrite_new_pin_nets(text, requests):
+    """Join pairs of free pins with new local labels on a single sheet."""
+    if not text.lstrip().startswith("(kicad_sch") or not isinstance(requests, list) or not 1 <= len(requests) <= 5:
+        raise ValueError("Provide 1 to 5 new pin nets in a KiCad schematic")
+    fields = {"from_ref", "from_pin", "to_ref", "to_pin", "net"}
+    endpoints = []
+    for item in requests:
+        if (not isinstance(item, dict) or set(item) != fields or
+                any(not isinstance(item[key], str) for key in fields) or
+                any(not re.fullmatch(r"[A-Za-z]{1,4}[1-9][0-9]*", item[key])
+                    for key in ("from_ref", "to_ref")) or
+                any(not re.fullmatch(r"[A-Za-z0-9.+_-]{1,20}", item[key])
+                    for key in ("from_pin", "to_pin")) or
+                not _LOCAL_NET_NAME.fullmatch(item["net"])):
+            raise ValueError("Invalid new pin net request")
+        endpoints.extend(((item["from_ref"], item["from_pin"]),
+                          (item["to_ref"], item["to_pin"])))
+    if len(set(endpoints)) != len(endpoints):
+        raise ValueError("Each pin may appear in only one new net")
+    if len({item["net"] for item in requests}) != len(requests):
+        raise ValueError("Each new net needs a distinct name")
+    labels, libraries, placed, occupied = _schematic_context(text)
+    if any(item["net"] in labels for item in requests):
+        raise ValueError("New net name already exists as a local label")
+    additions = []
+    positions = set()
+    for item in requests:
+        pin_requests = [{"ref": item["from_ref"], "pin": item["from_pin"]},
+                        {"ref": item["to_ref"], "pin": item["to_pin"]}]
+        for _, x, y in _pin_positions(pin_requests, libraries, placed, occupied | positions):
+            if (x, y) in positions:
+                raise ValueError("New net pins share a position")
+            positions.add((x, y))
+            additions.append(f'  (label {json.dumps(item["net"], ensure_ascii=False)} (at {x:g} {y:g} 0)'
+                             f' (effects (font (size 1.27 1.27))) (uuid "{uuid.uuid4()}"))')
+    return _append_forms(text, additions), positions

@@ -86,6 +86,18 @@ class ProjectToolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Invalid pin connection"):
             _validate_result({**reply, "pin_connections": [{"ref": "R3", "pin": 1, "net": "LINK"}]})
 
+    def test_new_pin_net_uses_shared_provider_contract(self):
+        pair = {"from_ref": "R3", "from_pin": "1", "to_ref": "R4",
+                "to_pin": "1", "net": "PAIR"}
+        reply = {"answer": "Connect the two pins", "edit_schematic": False,
+                 "placements": [], "tool_requests": [], "footprint_updates": [],
+                 "new_pin_nets": [pair]}
+        self.assertEqual(_validate_result(reply)["new_pin_nets"], [pair])
+        with self.assertRaisesRegex(RuntimeError, "separate review"):
+            _validate_result({**reply, "pin_connections": [{"ref": "R5", "pin": "1", "net": "PAIR"}]})
+        with self.assertRaisesRegex(RuntimeError, "Invalid new pin net"):
+            _validate_result({**reply, "new_pin_nets": [{**pair, "to_pin": 1}]})
+
     def test_no_connect_uses_shared_provider_contract(self):
         reply = {"answer": "Mark R3.2 unused", "edit_schematic": False,
                  "placements": [], "tool_requests": [], "footprint_updates": [],

@@ -43,7 +43,8 @@ from providers import CLI_PROVIDERS, DEFAULT_MODELS, DEFAULT_URLS, LOCAL_PROVIDE
 from project_tools import execute_read_tool, tool_label
 from schematic import (read_schematic, stage_field_updates, stage_footprint_updates,
                        stage_net_renames, stage_no_connect_markers,
-                       stage_pin_connections, stage_pin_disconnections, stage_schematic_edit)
+                       stage_pin_connections, stage_pin_disconnections, stage_new_pin_nets,
+                       stage_schematic_edit)
 
 
 class ChatFrame(wx.Frame):
@@ -965,10 +966,20 @@ class ChatFrame(wx.Frame):
             token.check()
             if (result["footprint_updates"] or result["field_updates"] or result["net_renames"] or
                     result["pin_connections"] or result["pin_disconnections"] or
+                    result["new_pin_nets"] or
                     result["no_connect_markers"] or
                     result["edit_schematic"]) and "components" not in schematic_snapshot:
                 raise RuntimeError(self._t("schematic_required", error=schematic_snapshot.get("unavailable", "")))
-            if result["pin_disconnections"]:
+            if result["new_pin_nets"]:
+                wx.CallAfter(self._set_activity, token, self._t("checking_copy"))
+                staged = stage_new_pin_nets(board_snapshot, result["new_pin_nets"], self._language, token)
+                try:
+                    plan = prepare_design_plan(self._kicad.get_board(), staged, schematic_snapshot, self._language)
+                except Exception:
+                    staged.cleanup()
+                    raise
+                wx.CallAfter(self._schematic_result, plan, messages, result["answer"], token, inspected)
+            elif result["pin_disconnections"]:
                 wx.CallAfter(self._set_activity, token, self._t("checking_copy"))
                 staged = stage_pin_disconnections(board_snapshot, result["pin_disconnections"], self._language, token)
                 try:
