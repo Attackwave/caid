@@ -10,6 +10,7 @@ _PAD = re.compile(r'\(pad\s+"([^"]+)"\s+\w+\s+\w+\s+\(at\s+([-\d.]+)\s+([-\d.]+)
 _DESC = re.compile(r'\(descr\s+"([^"]*)"\)')
 _MODEL = re.compile(r'\(model\s+"([^"]+)"')
 _TERM = re.compile(r'footprint|fußabdruck|fussabdruck|gehäuse|gehaeuse|package|land.?pattern', re.I)
+_FOOTPRINT_ID = re.compile(r'(?<![A-Za-z0-9_.+\-])([A-Za-z0-9_.+\-]+:[A-Za-z0-9_.+\-]+)(?![A-Za-z0-9_.+\-])')
 
 
 def _libraries(project_path, standard_root=None):
@@ -81,9 +82,21 @@ def inspect_footprints(board_snapshot, schematic_snapshot, query, standard_root=
     libraries = list(_libraries(board_snapshot["project_path"], standard_root))
     by_name = {name: (directory, source) for name, directory, source in libraries}
     exact = []
+    names = set()
+    for identifier in dict.fromkeys(_FOOTPRINT_ID.findall(query)):
+        lib, name = identifier.split(":", 1)
+        if lib not in by_name:
+            continue
+        directory, source = by_name[lib]
+        file = directory / f"{name}.kicad_mod"
+        if file.is_file():
+            exact.append(_details(lib, file, source))
+            names.add(identifier)
+        if len(exact) >= 8:
+            break
     for part in selected[:8]:
         footprint_id = part.get("footprint", "")
-        if ":" not in footprint_id:
+        if ":" not in footprint_id or footprint_id in names:
             continue
         lib, name = footprint_id.split(":", 1)
         if lib in by_name:
@@ -91,7 +104,7 @@ def inspect_footprints(board_snapshot, schematic_snapshot, query, standard_root=
             file = directory / f"{name}.kicad_mod"
             if file.is_file():
                 exact.append(_details(lib, file, source))
-    names = {item["id"] for item in exact}
+                names.add(footprint_id)
     similar = []
     for match in exact:
         base = match["id"].split(":", 1)[1]

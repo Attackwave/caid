@@ -105,6 +105,7 @@ def _netlist_snapshot(root, path, *, full=False):
         })
     return {
         "document": path.name,
+        "source_path": str(path),
         "saved_file_sha256": hashlib.sha256(source).hexdigest(),
         "component_count": len(components),
         "net_count": len(nets),
