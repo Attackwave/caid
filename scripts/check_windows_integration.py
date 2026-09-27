@@ -26,7 +26,7 @@ from caid_chat.routing import default_contract, set_layers, set_limits
 from caid_chat.schematic import (apply_schematic_edit, stage_field_updates,
                                  stage_net_renames, stage_no_connect_markers,
                                  stage_pin_connections, stage_pin_disconnections,
-                                 stage_new_pin_nets)
+                                 stage_new_pin_nets, stage_symbol_additions)
 
 
 KICAD_ROOT = Path(sys.executable).resolve().parent.parent
@@ -182,6 +182,23 @@ def check_new_design(parent):
             assert expected_error in str(error)
         else:
             raise AssertionError("Invalid new pin net was accepted")
+    original = hashlib.sha256(schematic.read_bytes()).hexdigest()
+    staged = stage_symbol_additions(
+        {"project_path": str(output), "document": "RecoverySmoke.kicad_pcb"},
+        [{"ref": "R5", "symbol": "Device:R", "value": "47k",
+          "footprint": "Resistor_SMD:R_0805_2012Metric", "x_mm": 120, "y_mm": 80}])
+    try:
+        before = {item["ref"]: item for item in staged.before_snapshot["components"]}
+        after = {item["ref"]: item for item in staged.candidate_snapshot["components"]}
+        assert set(after) == set(before) | {"R5"}
+        assert all(after[ref] == item for ref, item in before.items())
+        assert after["R5"]["value"] == "47k"
+        assert hashlib.sha256(schematic.read_bytes()).hexdigest() == original
+        backup = apply_schematic_edit(staged)
+        assert hashlib.sha256(backup.read_bytes()).hexdigest() == original
+    finally:
+        staged.cleanup()
+    print("Symbol addition: KiCad exported R5; old components and nets preserved")
 
 
 def _point(x, y):

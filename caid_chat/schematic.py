@@ -23,6 +23,7 @@ try:
     from .schematic_fields import _root_forms
     from .schematic_connections import (rewrite_no_connect_markers, rewrite_pin_connections,
                                         rewrite_pin_disconnections, rewrite_new_pin_nets)
+    from .schematic_symbols import rewrite_symbol_additions
 except ImportError:  # KiCad starts main.py directly from the plugin directory.
     from diagnostics import _cli_path
     from footprints import find_footprint
@@ -33,6 +34,7 @@ except ImportError:  # KiCad starts main.py directly from the plugin directory.
     from schematic_fields import _root_forms
     from schematic_connections import (rewrite_no_connect_markers, rewrite_pin_connections,
                                        rewrite_pin_disconnections, rewrite_new_pin_nets)
+    from schematic_symbols import rewrite_symbol_additions
 
 
 _NOTE_FORM = re.compile(r'^\((?:text|text_box)\s+("(?:\\.|[^"\\])*")', re.DOTALL)
@@ -573,6 +575,77 @@ def stage_new_pin_nets(board_snapshot, requests, language="en", token=None):
         (stage_dir / "change.diff").write_text(diff, encoding="utf-8")
         details = ", ".join(f"{item['from_ref']}.{item['from_pin']} ↔ "
                             f"{item['to_ref']}.{item['to_pin']}: {item['net']}" for item in requests)
+        return StagedSchematic(source, candidate, stage_dir,
+                               hashlib.sha256(original).hexdigest(), diff, details,
+                               before_erc, after_erc, after_snapshot, before_snapshot,
+                               before_findings, after_findings)
+    except Exception:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        raise
+
+
+def stage_symbol_additions(board_snapshot, requests, language="en", token=None,
+                           symbol_root=None, footprint_root=None):
+    """Stage installed single-unit symbols and verify the exact KiCad netlist delta."""
+    source = schematic_path(board_snapshot, language)
+    original = source.read_bytes()
+    updated_text, added_refs = rewrite_symbol_additions(
+        original.decode("utf-8-sig"), requests, source.parent,
+        symbol_root=symbol_root, footprint_root=footprint_root)
+    stage_dir = Path(tempfile.mkdtemp(prefix="caid-add-symbols-"))
+    candidate = stage_dir / source.name
+    try:
+        candidate.write_text(updated_text, encoding="utf-8")
+        _copy_project_support(source, stage_dir)
+        with tempfile.TemporaryDirectory(prefix="caid-symbol-check-") as check_dir:
+            before_root = _run_cli_netlist(source, Path(check_dir) / "before.xml", language, token)
+            after_root = _run_cli_netlist(candidate, Path(check_dir) / "after.xml", language, token)
+            before_snapshot = _netlist_snapshot(before_root, source, full=True)
+            after_snapshot = _netlist_snapshot(after_root, candidate, full=True)
+            before_erc, before_findings = _erc_report(source, Path(check_dir) / "before.json", language, token)
+            after_erc, after_findings = _erc_report(candidate, Path(check_dir) / "after.json", language, token)
+        before_components = {comp["ref"]: comp for comp in before_snapshot["components"]}
+        after_components = {comp["ref"]: comp for comp in after_snapshot["components"]}
+        if not set(before_components).isdisjoint(added_refs) or set(after_components) != set(before_components) | added_refs:
+            raise RuntimeError("KiCad exported unexpected components after symbol addition")
+        if any(after_components[ref] != comp for ref, comp in before_components.items()):
+            raise RuntimeError("Existing KiCad components changed during symbol addition")
+        exported = {comp.get("ref", ""): comp for comp in after_root.findall("./components/comp")}
+        for item in requests:
+            ref = item["ref"]
+            comp = exported[ref]
+            library, name = item["symbol"].split(":", 1)
+            source_id = comp.find("libsource")
+            if (after_components[ref]["value"] != item["value"] or
+                    after_components[ref]["footprint"] != item["footprint"] or
+                    source_id is None or source_id.get("lib") != library or
+                    source_id.get("part") != name):
+                raise RuntimeError(f"KiCad exported unexpected symbol properties for {ref}")
+
+        def net_map(root):
+            return {net.get("name", ""): sorted((node.get("ref", ""), node.get("pin", ""))
+                    for node in net.findall("node")) for net in root.findall("./nets/net")}
+
+        before_nets = net_map(before_root)
+        after_nets = net_map(after_root)
+        for name, nodes in list(after_nets.items()):
+            new_nodes = [node for node in nodes if node[0] in added_refs]
+            if not new_nodes:
+                continue
+            if (len(nodes) != 1 or len(new_nodes) != 1 or
+                    name != f"unconnected-({nodes[0][0]}-Pad{nodes[0][1]})"):
+                raise RuntimeError("New symbol connected to an existing schematic net")
+            after_nets.pop(name)
+        if after_nets != before_nets:
+            raise RuntimeError("Existing KiCad nets changed during symbol addition")
+        diff = "".join(difflib.unified_diff(
+            original.decode("utf-8-sig").splitlines(keepends=True),
+            updated_text.splitlines(keepends=True),
+            fromfile=source.name + " (before)", tofile=source.name + " (proposal)"))
+        (stage_dir / "change.diff").write_text(diff, encoding="utf-8")
+        details = ", ".join(f"{item['ref']}: {item['symbol']} {item['value']} "
+                            f"({item['x_mm']:g}, {item['y_mm']:g} mm)" for item in requests)
+        details += "\nNew symbols are unconnected; review ERC and update the PCB with F8 after Apply."
         return StagedSchematic(source, candidate, stage_dir,
                                hashlib.sha256(original).hexdigest(), diff, details,
                                before_erc, after_erc, after_snapshot, before_snapshot,

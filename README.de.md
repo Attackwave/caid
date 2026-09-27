@@ -35,6 +35,8 @@ Vor dem Übernehmen einer Platzierung vergleicht CAID den vollständigen Live-Zu
 
 Für ein neues lokales Netz zwischen zwei freien Pins kannst du etwa „Verbinde R3 Pin 1 und R4 Pin 1 als PAIR“ schreiben. CAID setzt an beide Pin-Enden passende lokale Labels und prüft, dass KiCad genau diese beiden Pins im neuen Netz sieht. Ein vorhandener Netzname oder bereits verbundene Pins werden abgewiesen. Das ergibt eine elektrische Verbindung ohne gezeichneten Draht; die oben genannten Grenzen für Schaltplanblatt und Symbolausrichtung gelten weiterhin.
 
+Für ein neues, zunächst unverbundenes Symbol auf einem vorhandenen Schaltplanblatt nenne Referenz, installierte Symbolkennung, Wert, installierte Footprint-Kennung und Schaltplanposition. Beispiel: „Füge R5 mit Device:R, 47k, Resistor_SMD:R_0805_2012Metric bei 120, 80 mm ein.“ CAID prüft KiCads Netzliste und zeigt neue ERC-Befunde sowie den fehlenden PCB-Footprint vor der Übernahme. Die Passung des Gehäuses und grafische Überlappungen im Schaltplan müssen geprüft werden; mit F8 wird der PCB-Footprint ergänzt.
+
 ## Installation unter Windows
 
 Voraussetzung ist KiCad 10 unter Windows mit aktivierter Option **KiCad-API aktivieren** in den Plugin-Einstellungen. Öffne die **Plugin- und Content-Verwaltung → Repositories verwalten** und füge `https://attackwave.github.io/caid/pcm/repository.json` hinzu. Wähle dort **CAID Chat** und klicke **Installieren**. Starte KiCad neu, öffne eine gespeicherte Platine im PCB-Editor und wähle **Werkzeuge → Externe Plugins → CAID Chat öffnen**. `/status` zeigt die Verbindung.
