@@ -45,6 +45,26 @@ class FootprintInspectionTests(unittest.TestCase):
         self.assertTrue(asks_about_footprint("Welches Gehäuse passt?"))
         self.assertFalse(asks_about_footprint("Verteile U1 und U2 auf der Platine"))
 
+    def test_explicit_library_id_is_inspected_without_an_existing_component(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            standard = project / "installed"
+            library = standard / "Resistor_SMD.pretty"
+            library.mkdir(parents=True)
+            (library / "R_0805_2012Metric.kicad_mod").write_text(
+                '(footprint "R_0805_2012Metric" '
+                '(pad "1" smd rect (at -1 0) (size 1 1)) '
+                '(pad "2" smd rect (at 1 0) (size 1 1)))', encoding="utf-8")
+            board = {"project_path": str(project), "footprints": []}
+            schematic = {"components": []}
+            for query in ("Resistor_SMD:R_0805_2012Metric",
+                          "Add R5 with Device:R and footprint Resistor_SMD:R_0805_2012Metric"):
+                with self.subTest(query=query):
+                    result = inspect_footprints(board, schematic, query, standard)
+                    self.assertEqual([item["id"] for item in result["exact_footprints"]],
+                                     ["Resistor_SMD:R_0805_2012Metric"])
+                    self.assertEqual(result["exact_footprints"][0]["source"], "installed")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -107,6 +107,10 @@ or a design is production ready.
 The project_brief in the PCB snapshot is the project-local source of truth for user
 requirements, decisions and open questions. The saved KiCad schematic and PCB are
 the source of truth for actual electrical connectivity and physical geometry.
+The schematic snapshot's source_path identifies the exact file read from disk;
+its saved_file_sha256 identifies that file's content. "Saved schematic" means
+that file, not a backup or an unsaved editor state. Name the source path when
+the user asks which schematic was read.
 When a brief requirement conflicts with the saved design, describe the mismatch
 and ask for clarification before proposing a hardware change.
 When the user requests placement, distribution, or TOP/BOTTOM sides, return a
@@ -126,7 +130,10 @@ Distinguish a footprint found on disk from a package verified against the exact
 manufacturer part drawing. Do not propose changing a PCB footprint solely because
 a similarly named standard footprint exists. If schematic and PCB IDs differ,
 explain that KiCad's native PCB update can replace the PCB footprint after review.
-If the IDs match, say that no PCB footprint change is currently needed."""
+If the IDs match, say that no PCB footprint change is currently needed. When
+exact_footprints contains the requested library ID, its file was found on disk;
+do not describe it as missing. A PCB footprint ID alone does not establish that
+the corresponding library file exists."""
 INSTRUCTIONS += """\nWhen the user explicitly requests assigning a different installed footprint to
 an existing schematic symbol, use footprint_updates with its exact library ID.
 Only do this when the requested target is supported by project evidence; a similar
@@ -173,7 +180,10 @@ single-unit symbol without any electrical connections; use a later operation
 to connect its pins. It supports a single-sheet schematic and coordinates
 within a standard KiCad page. Avoid overlapping existing symbols. Keep every other change array empty and
 edit_schematic=false. CAID checks KiCad's exported component and unchanged
-existing nets, reports ERC findings, and previews PCB impact before review."""
+existing nets, reports ERC findings, and previews PCB impact before review.
+If the user provides exact installed IDs, propose the structured addition;
+the application verifies the files before staging. Do not refuse merely
+because the requested reference does not yet appear in the saved schematic."""
 INSTRUCTIONS += """\nWhen the user asks to disconnect an existing pin from an existing local net,
 use pin_disconnections with {ref,pin,net} and the exact reference, pin number,
 and label name without a leading slash. This removes an exact local label at

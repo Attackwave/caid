@@ -2,12 +2,24 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from xml.etree import ElementTree
 
 from caid_chat.schematic import (StagedSchematic, _schematic_notes,
-                                 _validate_circuit_candidate, apply_schematic_edit)
+                                 _validate_circuit_candidate, _netlist_snapshot,
+                                 apply_schematic_edit)
 
 
 class SchematicApplyTests(unittest.TestCase):
+    def test_snapshot_identifies_the_exact_saved_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "FlashROM42.kicad_sch"
+            source.write_text('(kicad_sch (version 20260306))', encoding="utf-8")
+            root = ElementTree.fromstring('<export><components/><nets/></export>')
+            snapshot = _netlist_snapshot(root, source)
+            self.assertEqual(snapshot["source_path"], str(source))
+            self.assertEqual(snapshot["document"], source.name)
+            self.assertEqual(len(snapshot["saved_file_sha256"]), 64)
+
     def test_root_sheet_notes_are_read_without_symbol_library_text(self):
         source = '''(kicad_sch
           (lib_symbols (symbol "Lib:Part" (text "inside library")))

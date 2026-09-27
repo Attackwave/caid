@@ -1,6 +1,6 @@
 # CAID roadmap
 
-This roadmap starts from v0.31.0. It describes the currently known work needed to turn CAID from a useful KiCad 10 prototype into a dependable, general-purpose circuit and PCB design assistant. The Amiga ROM adapter is one demanding test project, not a product-specific mode or the basis for general electrical assumptions.
+This roadmap starts from v0.31.1. It describes the currently known work needed to turn CAID from a useful KiCad 10 prototype into a dependable, general-purpose circuit and PCB design assistant. The Amiga ROM adapter is one demanding test project, not a product-specific mode or the basis for general electrical assumptions.
 
 ## Planning basis
 
@@ -16,6 +16,8 @@ M1 and M2 are in progress. v0.23.8 adds a bounded subprocess for the KiCad conte
 CAID already installs through a KiCad PCM repository; connects to the open PCB; reads saved schematic netlists; runs ERC and DRC; tracks a project brief; stages new single-sheet circuits and unrouted boards; previews selected schematic fields and PCB placement; and routes bounded batches on isolated PCB copies. It supports WSL CLIs, cloud APIs, and local model servers. Routing uses local path search followed by KiCad DRC; part evidence is recorded but not independently authenticated. A successful check is evidence for the stated check only.
 
 v0.31.0 additionally supports creating a new local net between two explicitly selected free pins with matching labels, exact KiCad netlist comparison, and ERC review. It can add an unconnected installed, single-unit symbol to an existing sheet after an exact KiCad component/netlist check. Symbol removal, multi-unit additions, drawn-wire edits, and power markers remain open.
+
+v0.31.1 fixes exact footprint-ID inspection for parts that are not yet in the schematic and shows the saved schematic file path and content fingerprint in `/schematic`.
 
 ## Delivery sequence
 

@@ -222,6 +222,8 @@ MESSAGES = {
                    "CAID konnte die Anfrage nach drei Prüfrunden nicht abschließen. Bitte grenze die Aufgabe ein."),
     "checking_copy": ("Creating and checking the schematic working copy …", "Erstelle und prüfe die Schaltplan-Arbeitskopie …"),
     "schematic_overview": ("Saved schematic: {components} components, {nets} nets.", "Gespeicherter Schaltplan: {components} Bauteile, {nets} Netze."),
+    "schematic_source": ("File on disk: {path}", "Datei auf der Festplatte: {path}"),
+    "schematic_file_revision": ("File fingerprint (SHA-256): {digest}…", "Datei-Fingerabdruck (SHA-256): {digest}…"),
     "schematic_notes": ("Notes on the saved root sheet:", "Notizen auf dem gespeicherten Hauptblatt:"),
     "more_schematic_notes": ("More notes or full text remain in the saved file.",
                              "Weitere Notizen oder der vollständige Text stehen in der gespeicherten Datei."),

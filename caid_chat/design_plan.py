@@ -122,17 +122,21 @@ def describe_design_plan(plan, language="en"):
     t = lambda en, de: localized(language, en, de)
     before_e, before_w = plan.staged.erc_before
     after_e, after_w = plan.staged.erc_after
-    lines = [t("Saved schematic → proposal", "Gespeicherter Schaltplan → Vorschlag"),
-             t(f"ERC errors {before_e} → {after_e}; warnings {before_w} → {after_w}.",
+    lines = [t("Saved schematic → proposal", "Gespeicherter Schaltplan → Vorschlag")]
+    source = getattr(plan.staged, "original", None)
+    if source is not None:
+        lines.append(t(f"Source file: {source}", f"Quelldatei: {source}"))
+    lines.extend([t(f"ERC errors {before_e} → {after_e}; warnings {before_w} → {after_w}.",
                f"ERC-Fehler {before_e} → {after_e}; Warnungen {before_w} → {after_w}."),
              "",
              t("Impact on the open PCB", "Auswirkung auf die geöffnete Platine"),
              t(f"Pad net differences to the schematic: {plan.pad_differences_before} → {plan.pad_differences_after}.",
                f"Pad-Netzabweichungen zum Schaltplan: {plan.pad_differences_before} → {plan.pad_differences_after}."),
              t(f"Footprint ID differences: {plan.footprint_differences_before} → {plan.footprint_differences_after}.",
-               f"Footprint-ID-Abweichungen: {plan.footprint_differences_before} → {plan.footprint_differences_after}.")]
+               f"Footprint-ID-Abweichungen: {plan.footprint_differences_before} → {plan.footprint_differences_after}.")])
     if after_e > before_e:
-        lines.insert(2, t("New ERC errors: inspect and resolve them before using the circuit.",
+        lines.insert(3 if source is not None else 2,
+                     t("New ERC errors: inspect and resolve them before using the circuit.",
                           "Neue ERC-Fehler: Prüfe und behebe sie, bevor du die Schaltung verwendest."))
     added_erc = new_erc_findings(getattr(plan.staged, "erc_findings_before", ()),
                                  getattr(plan.staged, "erc_findings_after", ()))

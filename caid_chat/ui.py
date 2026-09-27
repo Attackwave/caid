@@ -1193,7 +1193,9 @@ class ChatFrame(wx.Frame):
     def _schematic_overview(self, data, token):
         if not self._finish_work(token):
             return
-        lines = [self._t("schematic_overview", components=data['component_count'], nets=data['net_count'])]
+        lines = [self._t("schematic_overview", components=data['component_count'], nets=data['net_count']),
+                 self._t("schematic_source", path=data.get("source_path", data["document"])),
+                 self._t("schematic_file_revision", digest=data["saved_file_sha256"][:12])]
         notes = data.get("notes", [])
         if notes or data.get("note_count"):
             lines.append(self._t("schematic_notes"))
